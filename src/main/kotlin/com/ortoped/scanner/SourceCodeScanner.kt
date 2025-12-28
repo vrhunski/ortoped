@@ -6,9 +6,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import org.ossreviewtoolkit.downloader.Downloader
 import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.OrtResult
 import org.ossreviewtoolkit.model.Package
+import org.ossreviewtoolkit.model.config.DownloaderConfiguration
 import java.io.File
 
 private val logger = KotlinLogging.logger {}
@@ -43,11 +45,12 @@ class SourceCodeScanner(
         val score: Float?
     )
 
+    private val downloader: Downloader by lazy {
+        Downloader(DownloaderConfiguration())
+    }
+
     /**
      * Scan packages from an ORT analyzer result to extract license text
-     *
-     * NOTE: Currently simplified to extract license files without downloading.
-     * Source code downloading via ORT Downloader will be added in a future enhancement.
      */
     suspend fun scanPackages(
         ortResult: OrtResult,
@@ -99,10 +102,7 @@ class SourceCodeScanner(
     }
 
     /**
-     * Scan a single package by extracting license text from source
-     *
-     * NOTE: Currently simplified - expects source to be in download directory.
-     * Will be enhanced with ORT Downloader integration in future version.
+     * Scan a single package by downloading source and extracting license text
      */
     private suspend fun scanSinglePackage(pkg: Package): PackageScanResult = withContext(Dispatchers.IO) {
         logger.info { "Scanning source code for: ${pkg.id}" }
@@ -114,25 +114,20 @@ class SourceCodeScanner(
             return@withContext loadFromCache(cacheFile, pkg.id)
         }
 
-        // Look for source directory (could be from manual placement or previous ORT run)
-        val sourceDir = File(config.downloadDir, pkg.id.toPath())
+        // Create download directory for this package
+        val downloadDir = File(config.downloadDir, pkg.id.toPath())
+        downloadDir.mkdirs()
 
         try {
-            // Check if source directory exists
-            if (!sourceDir.exists() || !sourceDir.isDirectory) {
-                logger.debug { "Source directory not found for ${pkg.id}: $sourceDir" }
-                return@withContext PackageScanResult(
-                    packageId = pkg.id.toCoordinates(),
-                    licenseFindings = emptyList(),
-                    detectedLicenses = emptyList(),
-                    issues = listOf("Source directory not available (download not yet implemented)")
-                )
-            }
+            // Step 1: Download source code using ORT Downloader
+            logger.debug { "Downloading source for ${pkg.id}..." }
+            val provenance = downloader.download(pkg, downloadDir)
+            logger.debug { "Downloaded ${pkg.id} to $downloadDir" }
 
-            // Extract license text from source directory
-            val licenseFindings = extractLicenseText(sourceDir, pkg.id)
+            // Step 2: Extract license text from downloaded source
+            val licenseFindings = extractLicenseText(downloadDir, pkg.id)
 
-            // Get detected licenses from findings
+            // Step 3: Get detected licenses from findings
             val detectedLicenses = licenseFindings
                 .map { it.license }
                 .distinct()
@@ -158,6 +153,11 @@ class SourceCodeScanner(
                 detectedLicenses = emptyList(),
                 issues = listOf("Scan failed: ${e.message}")
             )
+        } finally {
+            // Cleanup if not caching downloads
+            if (!config.cacheDir.exists()) {
+                downloadDir.deleteRecursively()
+            }
         }
     }
 
