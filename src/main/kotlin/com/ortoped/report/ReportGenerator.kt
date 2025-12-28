@@ -57,6 +57,14 @@ class ReportGenerator {
             }
         }
 
+        if (scanResult.sourceCodeScanned) {
+            println("\nScanner Statistics:")
+            println("-".repeat(80))
+            println("  Packages scanned: ${scanResult.packagesScanned}")
+            println("  License text extracted: ${scanResult.summary.scannerResolvedLicenses}")
+            scanResult.scannerType?.let { println("  Scanner type: $it") }
+        }
+
         if (scanResult.aiEnhanced) {
             println("\nAI Enhancement Statistics:")
             println("-".repeat(80))
@@ -83,6 +91,9 @@ class ReportGenerator {
         println("  Total Dependencies      : ${scanResult.summary.totalDependencies}")
         println("  Resolved Licenses       : ${scanResult.summary.resolvedLicenses}")
         println("  Unresolved Licenses     : ${scanResult.summary.unresolvedLicenses}")
+        if (scanResult.sourceCodeScanned) {
+            println("  Scanner-Resolved        : ${scanResult.summary.scannerResolvedLicenses}")
+        }
         if (scanResult.aiEnhanced) {
             println("  AI-Resolved Licenses    : ${scanResult.summary.aiResolvedLicenses}")
         }

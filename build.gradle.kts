@@ -24,6 +24,14 @@ dependencies {
     implementation("org.ossreviewtoolkit:analyzer:$ortVersion")
     implementation("org.ossreviewtoolkit:model:$ortVersion")
 
+    // ORT Scanner for source code license detection
+    implementation("org.ossreviewtoolkit:scanner:$ortVersion")
+    implementation("org.ossreviewtoolkit:downloader:$ortVersion")
+
+    // Scanner plugins
+    implementation(platform("org.ossreviewtoolkit.plugins:scanners:$ortVersion"))
+    implementation("org.ossreviewtoolkit.plugins.scanners:scancode-scanner")
+
     // Package manager plugins platform - imports all 23 package managers
     implementation(platform("org.ossreviewtoolkit.plugins:package-managers:$ortVersion"))
     implementation("org.ossreviewtoolkit.plugins.packagemanagers:gradle-package-manager") {

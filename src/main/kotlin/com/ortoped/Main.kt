@@ -6,6 +6,9 @@ import com.github.ajalt.clikt.parameters.options.*
 import com.github.ajalt.clikt.parameters.types.file
 import com.ortoped.report.ReportGenerator
 import com.ortoped.scanner.ScanOrchestrator
+import com.ortoped.scanner.ScannerConfig
+import com.ortoped.scanner.SimpleScannerWrapper
+import com.ortoped.scanner.SourceCodeScanner
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -60,26 +63,61 @@ class ScanCommand : CliktCommand(
         help = "Also print report to console"
     ).flag(default = true)
 
+    // Scanner options
+    private val enableSourceScan by option(
+        "--source-scan",
+        help = "Enable source code scanning to extract actual license text (slower)"
+    ).flag(default = false)
+
+    private val scanCacheDir by option(
+        "--scan-cache",
+        help = "Directory for scanner cache"
+    ).file()
+
     override fun run() = runBlocking {
         logger.info { "Starting Ortoped scan..." }
         logger.info { "Demo Mode: $demoMode" }
         logger.info { "Project: ${projectDir.absolutePath}" }
         logger.info { "Output: ${outputFile.absolutePath}" }
         logger.info { "AI Enhancement: $enableAi" }
+        logger.info { "Source Scanning: $enableSourceScan" }
 
         if (demoMode) {
             echo("Running in DEMO mode - using mock data to showcase AI license resolution")
             echo()
         }
 
+        if (enableSourceScan) {
+            echo("Source code scanning ENABLED - downloading and extracting license text")
+            echo("Note: This may take significantly longer as source code must be downloaded")
+            echo()
+        }
+
         try {
-            val orchestrator = ScanOrchestrator()
+            // Create scanner configuration
+            val scannerConfig = ScannerConfig(
+                enabled = enableSourceScan,
+                cacheDir = scanCacheDir ?: File(System.getProperty("user.home"), ".ortoped/scanner-cache")
+            )
+
+            // Create source code scanner if enabled
+            val sourceCodeScanner = if (enableSourceScan) {
+                SourceCodeScanner(scannerConfig)
+            } else null
+
+            // Create orchestrator with scanner
+            val scanner = SimpleScannerWrapper(sourceCodeScanner)
+            val orchestrator = ScanOrchestrator(
+                scanner = scanner,
+                scannerConfig = scannerConfig
+            )
             val reportGenerator = ReportGenerator()
 
             // Run scan with AI enhancement
             val scanResult = orchestrator.scanWithAiEnhancement(
                 projectDir = projectDir,
                 enableAiResolution = enableAi,
+                enableSourceScan = enableSourceScan,
                 parallelAiCalls = parallelAi,
                 demoMode = demoMode
             )

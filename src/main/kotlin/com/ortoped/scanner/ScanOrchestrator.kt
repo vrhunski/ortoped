@@ -14,23 +14,35 @@ private val logger = KotlinLogging.logger {}
 
 class ScanOrchestrator(
     private val scanner: SimpleScannerWrapper = SimpleScannerWrapper(),
-    private val licenseResolver: LicenseResolver = LicenseResolver()
+    private val licenseResolver: LicenseResolver = LicenseResolver(),
+    private val scannerConfig: ScannerConfig = ScannerConfig()
 ) {
 
     suspend fun scanWithAiEnhancement(
         projectDir: File,
         enableAiResolution: Boolean = true,
+        enableSourceScan: Boolean = false,
         parallelAiCalls: Boolean = true,
         demoMode: Boolean = false
     ): ScanResult {
         logger.info { "Starting orchestrated scan for: ${projectDir.absolutePath}" }
+        logger.info { "Source code scanning: $enableSourceScan" }
+        logger.info { "AI enhancement: $enableAiResolution" }
 
-        // Step 1: Run scan (demo or real)
-        logger.info { "Step 1/3: Running scan..." }
+        // Step 1/4: Run analyzer scan
+        logger.info { "Step 1/4: Running analyzer..." }
+
+        // Step 2/4: Run source code scanner (if enabled)
+        logger.info { "Step 2/4: ${if (enableSourceScan) "Running source code scanner..." else "Skipping source scanner"}" }
         val scanResult = scanner.scanProject(
             projectDir = projectDir,
-            demoMode = demoMode
+            demoMode = demoMode,
+            enableSourceScan = enableSourceScan && scannerConfig.enabled
         )
+
+        if (scanResult.sourceCodeScanned) {
+            logger.info { "Source scan complete. Scanned ${scanResult.packagesScanned} packages" }
+        }
 
         // Step 3: AI enhancement for unresolved licenses
         if (!enableAiResolution || scanResult.unresolvedLicenses.isEmpty()) {

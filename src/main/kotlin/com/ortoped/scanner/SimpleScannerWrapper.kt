@@ -16,24 +16,35 @@ private val logger = KotlinLogging.logger {}
 /**
  * Scanner wrapper that integrates with ORT Analyzer for real dependency scanning
  */
-class SimpleScannerWrapper {
+class SimpleScannerWrapper(
+    private val sourceCodeScanner: SourceCodeScanner? = null
+) {
 
     suspend fun scanProject(
         projectDir: File,
-        demoMode: Boolean = false
+        demoMode: Boolean = false,
+        enableSourceScan: Boolean = false
     ): ScanResult {
         logger.info { "Starting scan for project: ${projectDir.absolutePath}" }
         logger.info { "Demo mode: $demoMode" }
+        logger.info { "Source scan: $enableSourceScan" }
 
         if (demoMode) {
             logger.info { "Using demo data to showcase AI license resolution" }
             return DemoDataProvider.generateDemoScanResult()
         }
 
-        return performRealScan(projectDir)
+        val (ortResult, baseResult) = performRealScan(projectDir)
+
+        // Enhance with source code scanner if enabled
+        if (enableSourceScan && sourceCodeScanner != null) {
+            return enhanceWithSourceScan(ortResult, baseResult)
+        }
+
+        return baseResult
     }
 
-    private fun performRealScan(projectDir: File): ScanResult {
+    private fun performRealScan(projectDir: File): Pair<org.ossreviewtoolkit.model.OrtResult?, ScanResult> {
         logger.info { "Starting real ORT scan..." }
 
         // Step 1: Configure the analyzer with sensible defaults
@@ -58,7 +69,7 @@ class SimpleScannerWrapper {
 
         if (managedFileInfo.managedFiles.isEmpty()) {
             logger.warn { "No package manager files found in ${projectDir.absolutePath}" }
-            return createEmptyScanResult(projectDir)
+            return null to createEmptyScanResult(projectDir)
         }
 
         logger.info { "Found ${managedFileInfo.managedFiles.size} package manager file(s)" }
@@ -68,7 +79,7 @@ class SimpleScannerWrapper {
         val ortResult = analyzer.analyze(managedFileInfo)
 
         // Step 4: Extract packages and convert to OrtoPed format
-        return convertOrtResultToScanResult(ortResult, projectDir)
+        return ortResult to convertOrtResultToScanResult(ortResult, projectDir)
     }
 
     private fun convertOrtResultToScanResult(
@@ -182,6 +193,64 @@ class SimpleScannerWrapper {
             ),
             unresolvedLicenses = emptyList(),
             aiEnhanced = false
+        )
+    }
+
+    /**
+     * Enhance scan results with source code scanning to extract license text
+     */
+    private suspend fun enhanceWithSourceScan(
+        ortResult: org.ossreviewtoolkit.model.OrtResult?,
+        baseResult: ScanResult
+    ): ScanResult {
+        if (ortResult == null || sourceCodeScanner == null) {
+            return baseResult
+        }
+
+        // Get IDs of packages with unresolved licenses
+        val unresolvedIds = baseResult.unresolvedLicenses
+            .map { org.ossreviewtoolkit.model.Identifier(it.dependencyId) }
+            .toSet()
+
+        if (unresolvedIds.isEmpty()) {
+            logger.info { "No unresolved licenses to scan" }
+            return baseResult.copy(sourceCodeScanned = true, packagesScanned = 0)
+        }
+
+        logger.info { "Running source code scan for ${unresolvedIds.size} unresolved packages" }
+
+        // Run source code scanner
+        val scanResults = sourceCodeScanner.scanPackages(ortResult, unresolvedIds)
+
+        // Enhance unresolved licenses with extracted text
+        val enhancedUnresolved = baseResult.unresolvedLicenses.map { unresolved ->
+            val id = org.ossreviewtoolkit.model.Identifier(unresolved.dependencyId)
+            val scanResult = scanResults[id]
+
+            if (scanResult != null && scanResult.licenseFindings.isNotEmpty()) {
+                val primaryFinding = scanResult.licenseFindings.first()
+                unresolved.copy(
+                    licenseText = primaryFinding.matchedText,
+                    licenseFilePath = primaryFinding.filePath,
+                    detectedByScanner = true
+                )
+            } else {
+                unresolved
+            }
+        }
+
+        val scannedCount = scanResults.values.count { it.licenseFindings.isNotEmpty() }
+
+        logger.info { "Source scan complete. Successfully scanned $scannedCount packages" }
+
+        return baseResult.copy(
+            unresolvedLicenses = enhancedUnresolved,
+            sourceCodeScanned = true,
+            scannerType = "ScanCode",
+            packagesScanned = scanResults.size,
+            summary = baseResult.summary.copy(
+                scannerResolvedLicenses = scannedCount
+            )
         )
     }
 }
