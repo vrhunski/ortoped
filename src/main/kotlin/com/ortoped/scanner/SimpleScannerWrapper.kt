@@ -20,7 +20,7 @@ class SimpleScannerWrapper {
 
     suspend fun scanProject(
         projectDir: File,
-        demoMode: Boolean = true
+        demoMode: Boolean = false
     ): ScanResult {
         logger.info { "Starting scan for project: ${projectDir.absolutePath}" }
         logger.info { "Demo mode: $demoMode" }

@@ -21,7 +21,7 @@ class ScanOrchestrator(
         projectDir: File,
         enableAiResolution: Boolean = true,
         parallelAiCalls: Boolean = true,
-        demoMode: Boolean = true
+        demoMode: Boolean = false
     ): ScanResult {
         logger.info { "Starting orchestrated scan for: ${projectDir.absolutePath}" }
 
