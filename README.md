@@ -5,8 +5,10 @@ OrtoPed is an intelligent wrapper around the OSS Review Toolkit (ORT) that lever
 ## 📚 Documentation
 
 - **[Quick Start Guide](docs/QUICKSTART.md)** - Get started in 5 minutes
+- **[Architecture Guide](docs/ARCHITECTURE.md)** - System architecture and design
+- **[Policy Evaluation](docs/POLICY-EVALUATION.md)** - License policy configuration and enforcement
+- **[Production Deployment](docs/PHASE6-PRODUCTION.md)** - Docker, CI/CD, and production guide
 - **[POC Summary](docs/POC-SUMMARY.md)** - Detailed proof-of-concept documentation
-- **[README](README.md)** - This file (comprehensive overview)
 
 ## Features
 
@@ -15,6 +17,8 @@ OrtoPed is an intelligent wrapper around the OSS Review Toolkit (ORT) that lever
 - **SBOM Generation**: Export scan results to industry-standard formats (CycloneDX, SPDX)
 - **Policy Evaluation**: Enforce license compliance with customizable YAML-based policies
 - **Source Code Scanning**: Extract actual license text from package source code
+- **Docker Support**: Production-ready multi-stage Docker images for easy deployment
+- **GitHub Action**: Reusable action for seamless CI/CD integration
 - **JSON Report Generation**: Generates comprehensive, machine-readable reports
 - **Performance Optimized**: Supports caching and parallel AI processing
 - **Easy Integration**: Simple CLI interface for standalone use or CI/CD integration
@@ -477,10 +481,14 @@ ortoped/
 - [x] Scanner integration (ScanCode source code scanning)
 - [x] SBOM generation (SPDX, CycloneDX)
 - [x] Policy evaluation and compliance rules
+- [x] Docker image (Phase 6 - Complete)
+- [x] GitHub Action (Phase 6 - Complete)
+- [x] CI/CD workflows (Phase 6 - Complete)
+- [x] Comprehensive test suite (Phase 6 - Complete)
 - [ ] Web dashboard for visualization
 - [ ] REST API
-- [ ] Docker image
 - [ ] Vulnerability scanning integration
+- [ ] Multi-architecture Docker images (ARM64)
 
 ## License
 
