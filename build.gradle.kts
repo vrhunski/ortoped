@@ -32,6 +32,10 @@ dependencies {
     implementation(platform("org.ossreviewtoolkit.plugins:scanners:$ortVersion"))
     implementation("org.ossreviewtoolkit.plugins.scanners:scancode-scanner")
 
+    // VCS plugins (for Git cloning support)
+    implementation(platform("org.ossreviewtoolkit.plugins:version-control-systems:$ortVersion"))
+    implementation("org.ossreviewtoolkit.plugins.versioncontrolsystems:git-version-control-system")
+
     // Package manager plugins platform - imports all 23 package managers
     implementation(platform("org.ossreviewtoolkit.plugins:package-managers:$ortVersion"))
     implementation("org.ossreviewtoolkit.plugins.packagemanagers:gradle-package-manager") {

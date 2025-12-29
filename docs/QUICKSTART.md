@@ -17,11 +17,14 @@ The demo POC is ready to test!
 ## Quick Test (No API Key Required)
 
 ```bash
-# Run demo without AI
+# Run demo without AI (local directory)
 ./build/install/ortoped/bin/ortoped scan --demo -o demo-report.json
 
 # Check the output
 cat demo-report.json
+
+# Scan remote repository
+./build/install/ortoped/bin/ortoped scan -p https://github.com/user/repo.git -o remote-report.json
 ```
 
 ## Test with AI License Resolution
@@ -100,19 +103,57 @@ After running, check:
 ./build/install/ortoped/bin/ortoped scan --demo --no-parallel-ai
 ```
 
+## Remote Repository Scanning
+
+OrtoPed can scan remote Git repositories without requiring manual cloning:
+
+```bash
+# Scan a GitHub repository
+./build/install/ortoped/bin/ortoped scan -p https://github.com/user/repo.git
+
+# Scan specific branch
+./build/install/ortoped/bin/ortoped scan -p https://github.com/user/repo.git --branch develop
+
+# Scan specific tag or release
+./build/install/ortoped/bin/ortoped scan -p https://github.com/user/repo.git --tag v1.0.0
+
+# Scan specific commit
+./build/install/ortoped/bin/ortoped scan -p https://github.com/user/repo.git --commit abc123def
+
+# Keep cloned repository for debugging
+./build/install/ortoped/bin/ortoped scan -p https://github.com/user/repo.git --keep-clone
+```
+
+**Supported URL formats:**
+- `https://github.com/user/repo.git`
+- `http://gitlab.com/user/repo.git`
+- `git@github.com:user/repo.git`
+- `git://github.com/user/repo.git`
+- `ssh://git@github.com/user/repo.git`
+
+The repository will be automatically cloned to a temporary directory, scanned, and cleaned up after the scan completes.
+
 ## All CLI Options
 
 ```bash
 ./build/install/ortoped/bin/ortoped scan --help
 
 Options:
-  -p, --project PATH    Project directory (default: current dir)
-  -o, --output FILE     Output JSON file (default: ortoped-report.json)
-  --demo                Use demo mode [DEFAULT: true]
-  --enable-ai           Enable AI resolution [DEFAULT: true]
-  --parallel-ai         Parallel AI calls [DEFAULT: true]
-  --console             Print to console [DEFAULT: true]
-  -h, --help            Show help
+  -p, --project PATH          Project directory or Git repository URL (default: current dir)
+  -o, --output FILE           Output JSON file (default: ortoped-report.json)
+  --demo                      Use demo mode [DEFAULT: true]
+  --enable-ai                 Enable AI resolution [DEFAULT: true]
+  --parallel-ai               Parallel AI calls [DEFAULT: true]
+  --source-scan               Enable source code scanning (default: false)
+  --console                   Print to console [DEFAULT: true]
+
+  # VCS options (for remote repositories)
+  --branch TEXT               Git branch to checkout
+  --tag TEXT                  Git tag to checkout
+  --commit TEXT               Git commit hash to checkout
+  --keep-clone                Keep cloned repository after scan
+
+  -h, --help                  Show help
 ```
 
 ## Next Steps

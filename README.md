@@ -104,10 +104,24 @@ cd ortoped
 
 ## Usage
 
-### Basic Scan
+### Basic Scan (Local Directory)
 
 ```bash
 ortoped scan -p /path/to/project
+```
+
+### Scan Remote Repository
+
+```bash
+# Scan any Git repository directly
+ortoped scan -p https://github.com/user/repo.git
+
+# Scan specific branch
+ortoped scan -p https://github.com/user/repo.git --branch develop
+
+# Scan specific tag or commit
+ortoped scan -p https://github.com/user/repo.git --tag v1.0.0
+ortoped scan -p https://github.com/user/repo.git --commit abc123def
 ```
 
 ### Custom Output File
@@ -134,12 +148,19 @@ ortoped scan -p /path/to/project --no-parallel-ai
 ortoped scan [OPTIONS]
 
 Options:
-  -p, --project PATH       Project directory to scan (default: current dir)
+  -p, --project PATH       Project directory or Git repository URL to scan (default: current dir)
   -o, --output FILE        Output file for JSON report (default: ortoped-report.json)
   --enable-ai              Enable AI-powered license resolution (default: true)
   --parallel-ai            Run AI license resolution in parallel (default: true)
-  --enable-caching         Enable ORT result caching (default: true)
+  --source-scan            Enable source code scanning to extract license text (default: false)
   --console                Also print report to console (default: true)
+
+  # VCS Options (for remote repositories)
+  --branch TEXT            Git branch to checkout
+  --tag TEXT               Git tag to checkout
+  --commit TEXT            Git commit hash to checkout
+  --keep-clone             Keep cloned repository after scan (for debugging)
+
   -h, --help               Show this message and exit
 ```
 

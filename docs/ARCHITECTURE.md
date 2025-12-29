@@ -96,6 +96,15 @@ OrtoPed follows a **wrapper-augmentation pattern** rather than reinventing depen
 │           └───────────────┬───────────────┘                      │
 │                           ▼                                      │
 │           ┌───────────────────────────────┐                     │
+│           │ Remote Repository Handler     │                     │
+│           │ (NEW - Git clone support)     │                     │
+│           │ - Auto-detect URL vs path     │                     │
+│           │ - Clone remote repos          │                     │
+│           │ - Branch/tag/commit checkout  │                     │
+│           │ - Auto cleanup                │                     │
+│           └───────────────┬───────────────┘                     │
+│                           ▼                                      │
+│           ┌───────────────────────────────┐                     │
 │           │   Scan Orchestrator           │                     │
 │           │   - Workflow coordination     │                     │
 │           │   - Parallel/Sequential modes │                     │
@@ -119,8 +128,9 @@ OrtoPed follows a **wrapper-augmentation pattern** rather than reinventing depen
 │         │                │                                      │
 │         │ ┌────────────┐ │                                      │
 │         │ │ ORT        │ │                                      │
-│         │ │ Scanner    │ │   (Future - for license text        │
-│         │ │ (Future)   │ │    extraction)                      │
+│         │ │ Scanner    │ │   ✅ COMPLETED - Source code        │
+│         │ │            │ │    license extraction               │
+│         │ │ Downloader │ │                                      │
 │         │ └────────────┘ │                                      │
 │         └────────────────┘                                      │
 │                   │                                              │
