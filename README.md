@@ -10,8 +10,11 @@ OrtoPed is an intelligent wrapper around the OSS Review Toolkit (ORT) that lever
 
 ## Features
 
-- **Automated Dependency Scanning**: Analyzes projects across 20+ package managers (Maven, Gradle, npm, pip, Cargo, etc.)
+- **Automated Dependency Scanning**: Analyzes projects across 27+ package managers (Maven, Gradle, npm, pip, Cargo, etc.)
 - **AI-Powered License Resolution**: Uses Claude AI to automatically identify licenses that ORT cannot resolve
+- **SBOM Generation**: Export scan results to industry-standard formats (CycloneDX, SPDX)
+- **Policy Evaluation**: Enforce license compliance with customizable YAML-based policies
+- **Source Code Scanning**: Extract actual license text from package source code
 - **JSON Report Generation**: Generates comprehensive, machine-readable reports
 - **Performance Optimized**: Supports caching and parallel AI processing
 - **Easy Integration**: Simple CLI interface for standalone use or CI/CD integration
@@ -248,6 +251,115 @@ OrtoPed generates a JSON report with the following structure:
 - **MEDIUM**: Likely correct but manual review recommended
 - **LOW**: Multiple possibilities, requires expert review
 
+## SBOM Generation
+
+OrtoPed can export scan results to industry-standard Software Bill of Materials (SBOM) formats.
+
+### Supported Formats
+
+- **CycloneDX**: JSON and XML (version 1.5)
+- **SPDX**: JSON (version 2.3)
+
+### Usage
+
+```bash
+# Generate CycloneDX JSON (default)
+ortoped sbom -i ortoped-report.json -o project.cdx.json
+
+# Generate SPDX JSON
+ortoped sbom -i ortoped-report.json -f spdx-json -o project.spdx.json
+
+# Generate CycloneDX XML
+ortoped sbom -i ortoped-report.json -f cyclonedx-xml -o project.cdx.xml
+
+# Exclude AI suggestions from SBOM
+ortoped sbom -i ortoped-report.json --no-ai -o project.cdx.json
+```
+
+### AI-Enhanced SBOMs
+
+AI license suggestions are embedded in the SBOM output:
+- **CycloneDX**: Custom properties (`ortoped:ai:*`)
+- **SPDX**: Annotations with type REVIEW
+
+### Full Pipeline Example
+
+```bash
+# Scan project and generate SBOM in one workflow
+ortoped scan -p /path/to/project -o scan-report.json
+ortoped sbom -i scan-report.json -o project.cdx.json
+```
+
+## Policy Evaluation
+
+Enforce license compliance policies with customizable YAML-based rules.
+
+### Features
+
+- **License Categories**: Group licenses (permissive, copyleft, commercial, unknown)
+- **Flexible Rules**: Category-based, allowlist, or denylist matching
+- **Scope Filtering**: Different rules for production vs dev dependencies
+- **AI Suggestions**: Get AI-powered fix recommendations for violations
+- **CI/CD Ready**: Fail builds on policy violations with `--strict` mode
+
+### Quick Start
+
+```bash
+# Evaluate with default policy (flags unknown licenses)
+ortoped policy -i ortoped-report.json
+
+# Use custom policy file
+ortoped policy -i ortoped-report.json -p enterprise-policy.yaml
+
+# Strict mode (fail on warnings)
+ortoped policy -i ortoped-report.json --strict
+```
+
+### Example Policy File
+
+```yaml
+version: "1.0"
+name: "Enterprise License Policy"
+
+categories:
+  permissive:
+    licenses: ["MIT", "Apache-2.0", "BSD-2-Clause", "ISC"]
+  copyleft:
+    licenses: ["GPL-3.0-only", "AGPL-3.0-only"]
+  unknown:
+    licenses: ["NOASSERTION", "Unknown"]
+
+rules:
+  - id: "no-copyleft"
+    severity: "ERROR"
+    category: "copyleft"
+    scopes: ["compile", "runtime"]
+    action: "DENY"
+    message: "Copyleft license '{{license}}' not allowed in production"
+
+  - id: "no-unknown"
+    severity: "ERROR"
+    category: "unknown"
+    action: "DENY"
+    message: "All licenses must be identified"
+
+settings:
+  failOn:
+    errors: true
+    warnings: false
+```
+
+See [Policy Evaluation Guide](docs/POLICY-EVALUATION.md) for detailed documentation.
+
+### Full Compliance Pipeline
+
+```bash
+# Scan → Policy Check → SBOM Generation
+ortoped scan -p . -o scan.json
+ortoped policy -i scan.json -p policy.yaml --strict
+ortoped sbom -i scan.json -o project.cdx.json
+```
+
 ## Performance Optimization
 
 ### Caching
@@ -362,9 +474,9 @@ ortoped/
 
 ## Roadmap
 
-- [ ] Scanner integration (ScanCode, FOSSology)
-- [ ] SBOM generation (SPDX, CycloneDX)
-- [ ] Policy evaluation and compliance rules
+- [x] Scanner integration (ScanCode source code scanning)
+- [x] SBOM generation (SPDX, CycloneDX)
+- [x] Policy evaluation and compliance rules
 - [ ] Web dashboard for visualization
 - [ ] REST API
 - [ ] Docker image

@@ -1,0 +1,51 @@
+# Build artifacts
+build/
+.gradle/
+*.jar
+*.class
+
+# IDE files
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+*.swp
+*.swo
+
+# Test artifacts
+.ort/
+reports/
+*.json
+!src/test/resources/*.json
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# CI/CD
+.github/
+
+# Local development
+docker-compose.yml
+.env
+.env.local
+
+# Temporary files
+*.log
+*.tmp
+*.temp
+.DS_Store
+
+# Examples (include only if needed)
+projects/
+examples/
+
+# Claude plans
+.claude/

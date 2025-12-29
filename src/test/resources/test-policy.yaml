@@ -1,0 +1,72 @@
+version: "1.0"
+name: "Test Policy"
+description: "Policy configuration for unit tests"
+
+categories:
+  permissive:
+    description: "Permissive open source licenses"
+    licenses:
+      - "MIT"
+      - "Apache-2.0"
+      - "BSD-2-Clause"
+      - "ISC"
+
+  copyleft:
+    description: "Strong copyleft licenses"
+    licenses:
+      - "GPL-3.0-only"
+      - "AGPL-3.0-only"
+
+  copyleft-limited:
+    description: "Weak copyleft licenses"
+    licenses:
+      - "LGPL-2.1-only"
+      - "MPL-2.0"
+
+  unknown:
+    description: "Unknown or unresolved licenses"
+    licenses:
+      - "NOASSERTION"
+      - "Unknown"
+
+rules:
+  - id: "no-copyleft"
+    name: "No Copyleft"
+    description: "Block strong copyleft licenses"
+    severity: "ERROR"
+    category: "copyleft"
+    scopes: ["compile", "runtime"]
+    action: "DENY"
+    message: "Copyleft license {{license}} not allowed in {{dependency}}"
+
+  - id: "warn-weak-copyleft"
+    name: "Warn on Weak Copyleft"
+    description: "Warn on weak copyleft licenses"
+    severity: "WARNING"
+    category: "copyleft-limited"
+    action: "REVIEW"
+    message: "Weak copyleft license {{license}} requires review"
+
+  - id: "no-unknown"
+    name: "No Unknown Licenses"
+    description: "All licenses must be identified"
+    severity: "ERROR"
+    category: "unknown"
+    action: "DENY"
+    message: "License must be identified for {{dependency}}"
+
+settings:
+  aiSuggestions:
+    acceptHighConfidence: true
+    treatMediumAsWarning: true
+    rejectLowConfidence: true
+
+  failOn:
+    errors: true
+    warnings: false
+
+  exemptions:
+    - dependency: "Maven:com.internal:test-lib:*"
+      reason: "Internal test library"
+      approvedBy: "test@example.com"
+      approvedDate: "2025-01-01"

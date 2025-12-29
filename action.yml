@@ -1,0 +1,164 @@
+name: 'OrtoPed License Scanner'
+description: 'AI-enhanced license compliance scanning for your dependencies'
+author: 'OrtoPed Team'
+
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  project-path:
+    description: 'Path to project directory to scan'
+    required: false
+    default: '.'
+
+  output-file:
+    description: 'Output file path for scan report (JSON)'
+    required: false
+    default: 'ortoped-report.json'
+
+  enable-ai:
+    description: 'Enable AI-powered license resolution'
+    required: false
+    default: 'true'
+
+  parallel-ai:
+    description: 'Run AI license resolution in parallel (faster)'
+    required: false
+    default: 'true'
+
+  source-scan:
+    description: 'Enable source code scanning to extract license text'
+    required: false
+    default: 'false'
+
+  policy-file:
+    description: 'Path to policy YAML file for compliance checking (optional)'
+    required: false
+
+  fail-on-violations:
+    description: 'Fail workflow if policy violations are found'
+    required: false
+    default: 'false'
+
+  sbom-format:
+    description: 'Generate SBOM in specified format (cyclonedx-json, cyclonedx-xml, spdx-json, spdx-tv, or none)'
+    required: false
+    default: 'none'
+
+  sbom-output:
+    description: 'Output file path for SBOM (if sbom-format is not none)'
+    required: false
+    default: 'ortoped-sbom.json'
+
+outputs:
+  report-file:
+    description: 'Path to the generated scan report'
+    value: ${{ steps.scan.outputs.report-file }}
+
+  violations-count:
+    description: 'Number of policy violations found (if policy evaluation was run)'
+    value: ${{ steps.policy.outputs.violations-count }}
+
+  unresolved-count:
+    description: 'Number of unresolved licenses'
+    value: ${{ steps.scan.outputs.unresolved-count }}
+
+  sbom-file:
+    description: 'Path to the generated SBOM file (if SBOM generation was enabled)'
+    value: ${{ steps.sbom.outputs.sbom-file }}
+
+runs:
+  using: 'composite'
+  steps:
+    # Step 1: Scan the project
+    - id: scan
+      name: Run OrtoPed Scan
+      shell: bash
+      run: |
+        echo "::group::OrtoPed License Scan"
+
+        # Build command
+        CMD="docker run --rm \
+          -v ${{ github.workspace }}:/workspace \
+          -e ANTHROPIC_API_KEY \
+          ortoped:latest \
+          scan \
+          -p /workspace/${{ inputs.project-path }} \
+          -o /workspace/${{ inputs.output-file }}"
+
+        # Add AI flags
+        if [ "${{ inputs.enable-ai }}" = "false" ]; then
+          CMD="$CMD --no-enable-ai"
+        fi
+
+        if [ "${{ inputs.parallel-ai }}" = "false" ]; then
+          CMD="$CMD --no-parallel-ai"
+        fi
+
+        # Add source scan flag
+        if [ "${{ inputs.source-scan }}" = "true" ]; then
+          CMD="$CMD --source-scan"
+        fi
+
+        # Run scan
+        eval $CMD
+
+        # Parse results
+        UNRESOLVED=$(cat ${{ inputs.output-file }} | jq -r '.summary.unresolvedLicenses // 0')
+        echo "unresolved-count=$UNRESOLVED" >> $GITHUB_OUTPUT
+        echo "report-file=${{ inputs.output-file }}" >> $GITHUB_OUTPUT
+
+        echo "::endgroup::"
+        echo "✅ Scan complete. Found $UNRESOLVED unresolved licenses."
+
+    # Step 2: Evaluate policy (if policy file provided)
+    - id: policy
+      name: Evaluate License Policy
+      if: inputs.policy-file != ''
+      shell: bash
+      run: |
+        echo "::group::Policy Evaluation"
+
+        docker run --rm \
+          -v ${{ github.workspace }}:/workspace \
+          ortoped:latest \
+          policy \
+          -i /workspace/${{ inputs.output-file }} \
+          -p /workspace/${{ inputs.policy-file }} \
+          -o /workspace/ortoped-policy-report.json \
+          --no-console
+
+        # Parse violations
+        VIOLATIONS=$(cat ortoped-policy-report.json | jq -r '.summary.errorCount // 0')
+        echo "violations-count=$VIOLATIONS" >> $GITHUB_OUTPUT
+
+        echo "::endgroup::"
+        echo "ℹ️ Policy evaluation complete. Found $VIOLATIONS violations."
+
+        # Fail if violations found and fail-on-violations is true
+        if [ "${{ inputs.fail-on-violations }}" = "true" ] && [ "$VIOLATIONS" -gt 0 ]; then
+          echo "::error::Policy evaluation failed with $VIOLATIONS violations"
+          exit 1
+        fi
+
+    # Step 3: Generate SBOM (if format specified)
+    - id: sbom
+      name: Generate SBOM
+      if: inputs.sbom-format != 'none'
+      shell: bash
+      run: |
+        echo "::group::SBOM Generation"
+
+        docker run --rm \
+          -v ${{ github.workspace }}:/workspace \
+          ortoped:latest \
+          sbom \
+          -i /workspace/${{ inputs.output-file }} \
+          -f ${{ inputs.sbom-format }} \
+          -o /workspace/${{ inputs.sbom-output }}
+
+        echo "sbom-file=${{ inputs.sbom-output }}" >> $GITHUB_OUTPUT
+
+        echo "::endgroup::"
+        echo "✅ SBOM generated: ${{ inputs.sbom-output }}"
