@@ -49,6 +49,11 @@ dependencies {
     // HTTP client for Claude API calls (no official Kotlin SDK, using standard HTTP)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // SBOM Generation Libraries
+    implementation("org.cyclonedx:cyclonedx-core-java:9.0.4")
+    implementation("org.spdx:java-spdx-library:1.1.11")
+    implementation("org.spdx:spdx-jackson-store:1.1.9")
+
     // CLI
     implementation("com.github.ajalt.clikt:clikt:4.4.0")
 

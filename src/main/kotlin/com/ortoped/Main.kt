@@ -212,6 +212,92 @@ class ScanCommand : CliktCommand(
     }
 }
 
+class SbomCommand : CliktCommand(
+    name = "sbom",
+    help = "Generate SBOM (Software Bill of Materials) from scan results"
+) {
+    private val inputFile by option(
+        "-i", "--input",
+        help = "Input JSON report file from ortoped scan"
+    ).file(mustExist = true)
+        .required()
+
+    private val outputFile by option(
+        "-o", "--output",
+        help = "Output SBOM file"
+    ).file()
+        .default(File("ortoped-sbom.cdx.json"))
+
+    private val format by option(
+        "-f", "--format",
+        help = "SBOM format: cyclonedx-json, cyclonedx-xml, spdx-json, spdx-tv"
+    ).convert { formatString ->
+        when (formatString) {
+            "cyclonedx-json" -> com.ortoped.sbom.SbomFormat.CYCLONEDX_JSON
+            "cyclonedx-xml" -> com.ortoped.sbom.SbomFormat.CYCLONEDX_XML
+            "spdx-json" -> com.ortoped.sbom.SbomFormat.SPDX_JSON
+            "spdx-tv" -> com.ortoped.sbom.SbomFormat.SPDX_TV
+            else -> fail("Invalid format: $formatString")
+        }
+    }.default(com.ortoped.sbom.SbomFormat.CYCLONEDX_JSON)
+
+    private val includeAiSuggestions by option(
+        "--include-ai",
+        help = "Include AI license suggestions in SBOM"
+    ).flag(default = true)
+
+    private val noAiSuggestions by option(
+        "--no-ai",
+        help = "Exclude AI license suggestions from SBOM"
+    ).flag(default = false)
+
+    override fun run() {
+        logger.info { "Generating SBOM from: ${inputFile.absolutePath}" }
+
+        try {
+            // Load scan result
+            val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+            val scanResult = json.decodeFromString<com.ortoped.model.ScanResult>(inputFile.readText())
+
+            // Configure SBOM generation
+            val config = com.ortoped.sbom.SbomConfig(
+                format = format,
+                includeAiSuggestions = includeAiSuggestions && !noAiSuggestions
+            )
+
+            // Select appropriate generator
+            val generator: com.ortoped.sbom.SbomGenerator = when (format) {
+                com.ortoped.sbom.SbomFormat.CYCLONEDX_JSON,
+                com.ortoped.sbom.SbomFormat.CYCLONEDX_XML ->
+                    com.ortoped.sbom.CycloneDxGenerator()
+                com.ortoped.sbom.SbomFormat.SPDX_JSON,
+                com.ortoped.sbom.SbomFormat.SPDX_TV ->
+                    com.ortoped.sbom.SpdxGenerator()
+            }
+
+            // Generate SBOM
+            echo("Generating ${format.displayName} SBOM...")
+            generator.generateToFile(scanResult, outputFile, config)
+
+            echo("✓ SBOM generated successfully!")
+            echo()
+            echo("Output file: ${outputFile.absolutePath}")
+            echo("Format: ${format.displayName}")
+            echo("Components: ${scanResult.dependencies.size}")
+            if (scanResult.aiEnhanced && config.includeAiSuggestions) {
+                echo("AI suggestions included: Yes")
+            }
+
+            logger.info { "SBOM generated: ${outputFile.absolutePath}" }
+
+        } catch (e: Exception) {
+            logger.error(e) { "SBOM generation failed" }
+            echo("Error: ${e.message}", err = true)
+            throw e
+        }
+    }
+}
+
 class VersionCommand : CliktCommand(
     name = "version",
     help = "Show version information"
@@ -225,6 +311,6 @@ class VersionCommand : CliktCommand(
 
 fun main(args: Array<String>) {
     OrtopedCli()
-        .subcommands(ScanCommand(), VersionCommand())
+        .subcommands(ScanCommand(), SbomCommand(), VersionCommand())
         .main(args)
 }
