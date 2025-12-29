@@ -54,6 +54,9 @@ dependencies {
     implementation("org.spdx:java-spdx-library:1.1.11")
     implementation("org.spdx:spdx-jackson-store:1.1.9")
 
+    // YAML parsing for policy files
+    implementation("com.charleskorn.kaml:kaml:0.56.0")
+
     // CLI
     implementation("com.github.ajalt.clikt:clikt:4.4.0")
 

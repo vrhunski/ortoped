@@ -1,6 +1,7 @@
 package com.ortoped
 
 import com.github.ajalt.clikt.core.CliktCommand
+import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.options.*
 import com.github.ajalt.clikt.parameters.types.file
@@ -298,6 +299,123 @@ class SbomCommand : CliktCommand(
     }
 }
 
+class PolicyCommand : CliktCommand(
+    name = "policy",
+    help = "Evaluate scan results against license compliance policies"
+) {
+    private val inputFile by option(
+        "-i", "--input",
+        help = "Input JSON report file from ortoped scan"
+    ).file(mustExist = true)
+        .required()
+
+    private val policyFile by option(
+        "-p", "--policy",
+        help = "YAML policy file (uses default policy if not specified)"
+    ).file()
+
+    private val outputFile by option(
+        "-o", "--output",
+        help = "Output file for policy report"
+    ).file()
+        .default(File("ortoped-policy-report.json"))
+
+    private val format by option(
+        "-f", "--format",
+        help = "Output format: json, console, both"
+    ).default("both")
+
+    private val strict by option(
+        "--strict",
+        help = "Fail on any violation (errors and warnings)"
+    ).flag(default = false)
+
+    private val enableAi by option(
+        "--enable-ai",
+        help = "Enable AI suggestions for fixing violations"
+    ).flag(default = true)
+
+    private val noConsole by option(
+        "--no-console",
+        help = "Suppress console output"
+    ).flag(default = false)
+
+    override fun run() = runBlocking {
+        logger.info { "Starting policy evaluation..." }
+
+        try {
+            // Load scan result
+            val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+            val scanResult = json.decodeFromString<com.ortoped.model.ScanResult>(inputFile.readText())
+
+            // Load policy
+            val loader = com.ortoped.policy.PolicyYamlLoader()
+            var config = loader.loadOrDefault(policyFile)
+
+            // Apply strict mode
+            if (strict) {
+                config = config.copy(
+                    settings = config.settings.copy(
+                        failOn = com.ortoped.policy.FailOnSettings(errors = true, warnings = true)
+                    )
+                )
+            }
+
+            // Evaluate policy
+            val evaluator = com.ortoped.policy.PolicyEvaluator(config)
+            var report = evaluator.evaluate(scanResult)
+
+            // Add AI suggestions if enabled
+            if (enableAi && report.violations.isNotEmpty()) {
+                echo("Generating AI suggestions for ${report.violations.size} violations...")
+                val advisor = com.ortoped.policy.ai.PolicyAiAdvisor()
+                val fixes = advisor.suggestFixes(report.violations)
+
+                // Update violations with AI suggestions
+                val updatedViolations = report.violations.map { violation ->
+                    fixes[violation.dependencyId]?.let {
+                        violation.copy(aiSuggestion = it)
+                    } ?: violation
+                }
+
+                report = report.copy(
+                    violations = updatedViolations,
+                    aiEnhanced = fixes.isNotEmpty()
+                )
+            }
+
+            // Generate output
+            val generator = com.ortoped.policy.PolicyReportGenerator()
+
+            when (format.lowercase()) {
+                "json" -> generator.generateJsonReport(report, outputFile)
+                "console" -> generator.generateConsoleReport(report)
+                "both" -> {
+                    generator.generateJsonReport(report, outputFile)
+                    if (!noConsole) {
+                        generator.generateConsoleReport(report)
+                    }
+                }
+            }
+
+            echo()
+            echo("Policy report saved to: ${outputFile.absolutePath}")
+
+            // Exit with error code if failed
+            if (!report.passed) {
+                throw CliktError("Policy evaluation failed with ${report.summary.errorCount} errors")
+            }
+
+        } catch (e: com.ortoped.policy.PolicyLoadException) {
+            echo("Policy Error: ${e.message}", err = true)
+            throw e
+        } catch (e: Exception) {
+            logger.error(e) { "Policy evaluation failed" }
+            throw e
+        }
+    }
+}
+
 class VersionCommand : CliktCommand(
     name = "version",
     help = "Show version information"
@@ -311,6 +429,6 @@ class VersionCommand : CliktCommand(
 
 fun main(args: Array<String>) {
     OrtopedCli()
-        .subcommands(ScanCommand(), SbomCommand(), VersionCommand())
+        .subcommands(ScanCommand(), SbomCommand(), PolicyCommand(), VersionCommand())
         .main(args)
 }

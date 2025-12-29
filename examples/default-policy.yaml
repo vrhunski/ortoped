@@ -1,0 +1,156 @@
+# OrtoPed Policy Configuration v1.0
+# Default policy for enterprise license compliance
+
+version: "1.0"
+name: "Enterprise License Policy"
+description: "Default compliance rules for enterprise projects"
+
+# =============================================================================
+# License Category Definitions
+# =============================================================================
+categories:
+  permissive:
+    description: "Licenses with minimal restrictions"
+    licenses:
+      - "MIT"
+      - "Apache-2.0"
+      - "BSD-2-Clause"
+      - "BSD-3-Clause"
+      - "ISC"
+      - "Unlicense"
+      - "0BSD"
+      - "CC0-1.0"
+      - "WTFPL"
+      - "Zlib"
+
+  copyleft:
+    description: "Strong copyleft licenses requiring derivative works to be open source"
+    licenses:
+      - "GPL-2.0-only"
+      - "GPL-2.0-or-later"
+      - "GPL-3.0-only"
+      - "GPL-3.0-or-later"
+      - "AGPL-3.0-only"
+      - "AGPL-3.0-or-later"
+
+  copyleft-limited:
+    description: "Weak copyleft licenses with limited scope"
+    licenses:
+      - "LGPL-2.0-only"
+      - "LGPL-2.1-only"
+      - "LGPL-3.0-only"
+      - "MPL-2.0"
+      - "EPL-1.0"
+      - "EPL-2.0"
+      - "CDDL-1.0"
+      - "CPL-1.0"
+
+  commercial:
+    description: "Commercial/proprietary licenses"
+    licenses:
+      - "Proprietary"
+      - "Commercial"
+      - "BUSL-1.1"
+
+  public-domain:
+    description: "Public domain dedications"
+    licenses:
+      - "CC0-1.0"
+      - "Unlicense"
+      - "WTFPL"
+
+  unknown:
+    description: "Unresolved or unknown licenses"
+    licenses:
+      - "NOASSERTION"
+      - "Unknown"
+
+# =============================================================================
+# Policy Rules
+# =============================================================================
+rules:
+  # Rule 1: Block strong copyleft licenses
+  - id: "no-copyleft"
+    name: "No Strong Copyleft Licenses"
+    description: "Strong copyleft licenses are not permitted in production dependencies"
+    severity: "ERROR"
+    category: "copyleft"
+    scopes:
+      - "compile"
+      - "runtime"
+      - "dependencies"
+    action: "DENY"
+    message: "Strong copyleft license '{{license}}' found in {{dependency}}. This may require open-sourcing your code."
+
+  # Rule 2: Warn on weak copyleft
+  - id: "warn-copyleft-limited"
+    name: "Review Weak Copyleft Licenses"
+    description: "Weak copyleft licenses require review before use"
+    severity: "WARNING"
+    category: "copyleft-limited"
+    scopes:
+      - "compile"
+      - "runtime"
+      - "dependencies"
+    action: "REVIEW"
+    message: "Weak copyleft license '{{license}}' in {{dependency}} requires legal review."
+
+  # Rule 3: Flag unknown licenses
+  - id: "no-unknown-licenses"
+    name: "All Licenses Must Be Identified"
+    description: "All dependencies must have resolved licenses"
+    severity: "ERROR"
+    category: "unknown"
+    scopes: []  # All scopes
+    action: "DENY"
+    message: "Dependency {{dependency}} has unresolved license. Manual review required."
+
+  # Rule 4: Allow permissive in dev only
+  - id: "dev-dependencies-allowed"
+    name: "Dev Dependencies Relaxed"
+    description: "Development dependencies have relaxed requirements"
+    severity: "INFO"
+    scopes:
+      - "test"
+      - "dev"
+      - "devDependencies"
+    action: "ALLOW"
+
+  # Rule 5: Block specific licenses (denylist)
+  - id: "license-denylist"
+    name: "Blocked Licenses"
+    description: "Certain licenses are never permitted"
+    severity: "ERROR"
+    denylist:
+      - "AGPL-3.0-only"
+      - "AGPL-3.0-or-later"
+      - "SSPL-1.0"
+      - "Proprietary"
+    action: "DENY"
+    message: "License '{{license}}' is explicitly prohibited."
+
+# =============================================================================
+# Global Settings
+# =============================================================================
+settings:
+  # How to handle AI-suggested licenses
+  aiSuggestions:
+    # Accept HIGH confidence AI suggestions as resolved
+    acceptHighConfidence: true
+    # Treat MEDIUM confidence as warnings
+    treatMediumAsWarning: true
+    # Reject LOW confidence (require manual review)
+    rejectLowConfidence: true
+
+  # Fail thresholds
+  failOn:
+    errors: true
+    warnings: false
+
+  # Exemptions (specific dependencies to skip)
+  exemptions: []
+    # Example exemptions:
+    # - dependency: "Maven:com.internal:legacy-lib:*"
+    #   reason: "Internal library with custom license agreement"
+    #   approvedBy: "legal@company.com"
+    #   approvedDate: "2025-01-15"
