@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OrtoPed - AI-Powered Open Source License Resolution</title>
+    <meta name="description" content="Stop curating. Start shipping. OrtoPed uses AI to resolve unknown open source licenses in seconds, not hours.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #0f766e;
+            --primary-dark: #0d5d56;
+            --primary-light: #14b8a6;
+            --secondary: #1e293b;
+            --accent: #f59e0b;
+            --bg: #ffffff;
+            --bg-alt: #f8fafc;
+            --bg-dark: #0f172a;
+            --text: #1e293b;
+            --text-muted: #64748b;
+            --text-light: #94a3b8;
+            --border: #e2e8f0;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --code-bg: #1e293b;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            color: var(--text);
+            line-height: 1.6;
+            background: var(--bg);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border);
+            z-index: 1000;
+            padding: 16px 0;
+        }
+
+        nav .container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: 800;
+            color: var(--primary);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: var(--primary);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 18px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 32px;
+            align-items: center;
+        }
+
+        .nav-links a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 15px;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--primary);
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 15px;
+            text-decoration: none;
+            transition: all 0.2s;
+            cursor: pointer;
+            border: none;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: var(--bg-alt);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--border);
+        }
+
+        .btn-large {
+            padding: 16px 32px;
+            font-size: 17px;
+        }
+
+        /* Hero Section */
+        .hero {
+            padding: 160px 0 100px;
+            background: linear-gradient(180deg, var(--bg) 0%, var(--bg-alt) 100%);
+        }
+
+        .hero-content {
+            max-width: 800px;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: rgba(15, 118, 110, 0.1);
+            border-radius: 50px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--primary);
+            margin-bottom: 24px;
+        }
+
+        .hero h1 {
+            font-size: clamp(40px, 6vw, 64px);
+            font-weight: 800;
+            line-height: 1.1;
+            margin-bottom: 24px;
+            color: var(--secondary);
+        }
+
+        .hero h1 span {
+            color: var(--primary);
+        }
+
+        .hero p {
+            font-size: 20px;
+            color: var(--text-muted);
+            margin-bottom: 40px;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .hero-buttons {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .hero-terminal {
+            margin-top: 60px;
+            background: var(--code-bg);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        }
+
+        .terminal-header {
+            background: #334155;
+            padding: 12px 16px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .terminal-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .terminal-dot.red { background: #ef4444; }
+        .terminal-dot.yellow { background: #f59e0b; }
+        .terminal-dot.green { background: #10b981; }
+
+        .terminal-body {
+            padding: 24px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            line-height: 1.8;
+            color: #e2e8f0;
+            text-align: left;
+            overflow-x: auto;
+        }
+
+        .terminal-body .comment { color: #64748b; }
+        .terminal-body .command { color: #10b981; }
+        .terminal-body .flag { color: #f59e0b; }
+        .terminal-body .output { color: #94a3b8; }
+        .terminal-body .success { color: #10b981; }
+        .terminal-body .highlight { color: #38bdf8; }
+
+        /* Problem Section */
+        .problem {
+            padding: 100px 0;
+            background: var(--bg);
+        }
+
+        .section-label {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 16px;
+        }
+
+        .section-title {
+            font-size: clamp(32px, 4vw, 44px);
+            font-weight: 700;
+            color: var(--secondary);
+            margin-bottom: 24px;
+            line-height: 1.2;
+        }
+
+        .section-subtitle {
+            font-size: 18px;
+            color: var(--text-muted);
+            max-width: 700px;
+        }
+
+        .problem-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+            margin-top: 60px;
+        }
+
+        .problem-card {
+            padding: 32px;
+            background: var(--bg-alt);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+
+        .problem-card-icon {
+            width: 48px;
+            height: 48px;
+            background: rgba(239, 68, 68, 0.1);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+
+        .problem-card h3 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--secondary);
+        }
+
+        .problem-card p {
+            color: var(--text-muted);
+            font-size: 15px;
+        }
+
+        /* Solution Section */
+        .solution {
+            padding: 100px 0;
+            background: var(--bg-alt);
+        }
+
+        .solution-comparison {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 32px;
+            align-items: center;
+            margin-top: 60px;
+        }
+
+        @media (max-width: 768px) {
+            .solution-comparison {
+                grid-template-columns: 1fr;
+            }
+            .solution-arrow {
+                transform: rotate(90deg);
+            }
+        }
+
+        .comparison-box {
+            padding: 32px;
+            border-radius: 12px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+        }
+
+        .comparison-box.before {
+            border-color: var(--error);
+            border-style: dashed;
+        }
+
+        .comparison-box.after {
+            border-color: var(--success);
+            box-shadow: 0 4px 20px rgba(16, 185, 129, 0.15);
+        }
+
+        .comparison-label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 20px;
+            padding: 6px 12px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+
+        .comparison-box.before .comparison-label {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--error);
+        }
+
+        .comparison-box.after .comparison-label {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+        }
+
+        .comparison-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 15px;
+        }
+
+        .comparison-item:last-child {
+            border-bottom: none;
+        }
+
+        .comparison-item span:first-child {
+            color: var(--text-muted);
+        }
+
+        .comparison-item span:last-child {
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .solution-arrow {
+            font-size: 32px;
+            color: var(--primary);
+        }
+
+        /* Features Section */
+        .features {
+            padding: 100px 0;
+            background: var(--bg);
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 32px;
+            margin-top: 60px;
+        }
+
+        .feature-card {
+            padding: 32px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            transition: all 0.3s;
+        }
+
+        .feature-card:hover {
+            border-color: var(--primary);
+            box-shadow: 0 10px 40px rgba(15, 118, 110, 0.1);
+        }
+
+        .feature-icon {
+            width: 56px;
+            height: 56px;
+            background: rgba(15, 118, 110, 0.1);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            margin-bottom: 24px;
+        }
+
+        .feature-card h3 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--secondary);
+        }
+
+        .feature-card p {
+            color: var(--text-muted);
+            font-size: 15px;
+            line-height: 1.7;
+        }
+
+        /* Comparison Table Section */
+        .comparison {
+            padding: 100px 0;
+            background: var(--bg-alt);
+        }
+
+        .comparison-table-wrapper {
+            margin-top: 60px;
+            overflow-x: auto;
+        }
+
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--bg);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 20px 24px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .comparison-table th {
+            background: var(--secondary);
+            color: white;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .comparison-table th:first-child {
+            text-align: left;
+        }
+
+        .comparison-table th.highlight {
+            background: var(--primary);
+        }
+
+        .comparison-table td {
+            font-size: 15px;
+        }
+
+        .comparison-table td:first-child {
+            font-weight: 500;
+            color: var(--secondary);
+        }
+
+        .comparison-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .comparison-table tr:hover td {
+            background: var(--bg-alt);
+        }
+
+        .check {
+            color: var(--success);
+            font-size: 20px;
+        }
+
+        .cross {
+            color: var(--text-light);
+            font-size: 20px;
+        }
+
+        /* Pricing Section */
+        .pricing {
+            padding: 100px 0;
+            background: var(--bg);
+        }
+
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+            margin-top: 60px;
+        }
+
+        .pricing-card {
+            padding: 40px 32px;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            text-align: center;
+        }
+
+        .pricing-card.featured {
+            border-color: var(--primary);
+            position: relative;
+            box-shadow: 0 10px 40px rgba(15, 118, 110, 0.15);
+        }
+
+        .pricing-card.featured::before {
+            content: 'Most Popular';
+            position: absolute;
+            top: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--primary);
+            color: white;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .pricing-card h3 {
+            font-size: 22px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--secondary);
+        }
+
+        .pricing-card .price {
+            font-size: 48px;
+            font-weight: 800;
+            color: var(--secondary);
+            margin: 24px 0;
+        }
+
+        .pricing-card .price span {
+            font-size: 18px;
+            font-weight: 500;
+            color: var(--text-muted);
+        }
+
+        .pricing-card .price-note {
+            font-size: 14px;
+            color: var(--text-muted);
+            margin-top: -16px;
+            margin-bottom: 24px;
+        }
+
+        .pricing-features {
+            list-style: none;
+            text-align: left;
+            margin: 32px 0;
+        }
+
+        .pricing-features li {
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 15px;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .pricing-features li:last-child {
+            border-bottom: none;
+        }
+
+        .pricing-features li::before {
+            content: '✓';
+            color: var(--success);
+            font-weight: 600;
+        }
+
+        .pricing-card .btn {
+            width: 100%;
+            justify-content: center;
+        }
+
+        /* CTA Section */
+        .cta {
+            padding: 100px 0;
+            background: var(--secondary);
+            text-align: center;
+        }
+
+        .cta h2 {
+            font-size: clamp(32px, 4vw, 44px);
+            font-weight: 700;
+            color: white;
+            margin-bottom: 16px;
+        }
+
+        .cta p {
+            font-size: 18px;
+            color: var(--text-light);
+            margin-bottom: 40px;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .cta .btn-primary {
+            background: var(--primary-light);
+        }
+
+        .cta .btn-primary:hover {
+            background: var(--primary);
+        }
+
+        /* Footer */
+        footer {
+            padding: 60px 0;
+            background: var(--bg-dark);
+            color: var(--text-light);
+        }
+
+        .footer-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 24px;
+        }
+
+        .footer-logo {
+            font-size: 20px;
+            font-weight: 700;
+            color: white;
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 32px;
+        }
+
+        .footer-links a {
+            color: var(--text-light);
+            text-decoration: none;
+            font-size: 14px;
+            transition: color 0.2s;
+        }
+
+        .footer-links a:hover {
+            color: white;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none;
+            }
+
+            .hero {
+                padding: 120px 0 60px;
+            }
+
+            .hero-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .comparison-table th,
+            .comparison-table td {
+                padding: 12px 16px;
+                font-size: 13px;
+            }
+
+            .pricing-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .footer-content {
+                flex-direction: column;
+                text-align: center;
+            }
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .hero-content > * {
+            animation: fadeInUp 0.6s ease-out;
+        }
+
+        .hero-content > *:nth-child(2) { animation-delay: 0.1s; }
+        .hero-content > *:nth-child(3) { animation-delay: 0.2s; }
+        .hero-content > *:nth-child(4) { animation-delay: 0.3s; }
+        .hero-terminal { animation: fadeInUp 0.6s ease-out 0.4s both; }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav>
+        <div class="container">
+            <a href="#" class="logo">
+                <div class="logo-icon">O</div>
+                OrtoPed
+            </a>
+            <div class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#comparison">Compare</a>
+                <a href="#pricing">Pricing</a>
+                <a href="https://github.com/vrhunski/ortoped" target="_blank">GitHub</a>
+                <a href="#" class="btn btn-primary">Get Started</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <div class="hero-content">
+                <div class="hero-badge">
+                    <span>Powered by AI</span>
+                </div>
+                <h1>Stop Curating.<br><span>Start Shipping.</span></h1>
+                <p>AI-powered license resolution for the 5-15% of dependencies your scanner returns as "unknown." Resolve in seconds, not hours.</p>
+                <div class="hero-buttons">
+                    <a href="#" class="btn btn-primary btn-large">Try Free</a>
+                    <a href="#features" class="btn btn-secondary btn-large">See How It Works</a>
+                </div>
+            </div>
+
+            <div class="hero-terminal">
+                <div class="terminal-header">
+                    <div class="terminal-dot red"></div>
+                    <div class="terminal-dot yellow"></div>
+                    <div class="terminal-dot green"></div>
+                </div>
+                <div class="terminal-body">
+                    <div><span class="comment"># Scan your project</span></div>
+                    <div><span class="command">$</span> ortoped scan <span class="flag">--ai</span> ./my-project</div>
+                    <br>
+                    <div><span class="output">Analyzing 247 dependencies...</span></div>
+                    <div><span class="output">Found 12 licenses marked as NOASSERTION</span></div>
+                    <div><span class="output">Resolving with AI...</span></div>
+                    <br>
+                    <div><span class="success">✓ Resolved 12/12 licenses</span></div>
+                    <div><span class="highlight">  - lodash-merge: MIT (confidence: 98%)</span></div>
+                    <div><span class="highlight">  - fast-xml-parser: MIT (confidence: 95%)</span></div>
+                    <div><span class="highlight">  - custom-lib: Apache-2.0 (confidence: 87%)</span></div>
+                    <div><span class="output">  ...</span></div>
+                    <br>
+                    <div><span class="success">✓ SBOM generated: sbom.cdx.json</span></div>
+                    <div><span class="success">✓ All policies passed</span></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Problem Section -->
+    <section class="problem">
+        <div class="container">
+            <div class="section-label">The Problem</div>
+            <h2 class="section-title">Your scanner finds licenses.<br>But what about the ones it doesn't?</h2>
+            <p class="section-subtitle">Every compliance tool hits the same wall: NOASSERTION. Unknown licenses block releases while your team manually researches each one.</p>
+
+            <div class="problem-grid">
+                <div class="problem-card">
+                    <div class="problem-card-icon">?</div>
+                    <h3>5-15% Unknown</h3>
+                    <p>Scanners like ScanCode and ORT can't identify every license. Each "NOASSERTION" becomes your problem to solve.</p>
+                </div>
+                <div class="problem-card">
+                    <div class="problem-card-icon">!</div>
+                    <h3>30 Minutes Each</h3>
+                    <p>Manual research for each unknown license. Check source files, read headers, search package registries, verify with legal.</p>
+                </div>
+                <div class="problem-card">
+                    <div class="problem-card-icon">X</div>
+                    <h3>Blocked Releases</h3>
+                    <p>Your release waits while compliance catches up. Multiply by every project, every sprint, every team.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Solution Section -->
+    <section class="solution" id="features">
+        <div class="container">
+            <div class="section-label">The Solution</div>
+            <h2 class="section-title">OrtoPed resolves what others can't</h2>
+            <p class="section-subtitle">AI analyzes license text, file headers, and package metadata—then returns SPDX-compliant identifiers with confidence scores.</p>
+
+            <div class="solution-comparison">
+                <div class="comparison-box before">
+                    <div class="comparison-label">Before OrtoPed</div>
+                    <div class="comparison-item">
+                        <span>License</span>
+                        <span style="color: var(--error);">NOASSERTION</span>
+                    </div>
+                    <div class="comparison-item">
+                        <span>Status</span>
+                        <span style="color: var(--error);">Blocked</span>
+                    </div>
+                    <div class="comparison-item">
+                        <span>Time</span>
+                        <span>30 minutes</span>
+                    </div>
+                    <div class="comparison-item">
+                        <span>Confidence</span>
+                        <span>Manual guess</span>
+                    </div>
+                </div>
+
+                <div class="solution-arrow">&#8594;</div>
+
+                <div class="comparison-box after">
+                    <div class="comparison-label">With OrtoPed</div>
+                    <div class="comparison-item">
+                        <span>License</span>
+                        <span style="color: var(--success);">MIT</span>
+                    </div>
+                    <div class="comparison-item">
+                        <span>Status</span>
+                        <span style="color: var(--success);">Resolved</span>
+                    </div>
+                    <div class="comparison-item">
+                        <span>Time</span>
+                        <span>3 seconds</span>
+                    </div>
+                    <div class="comparison-item">
+                        <span>Confidence</span>
+                        <span style="color: var(--success);">95% (AI)</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="features">
+        <div class="container">
+            <div class="section-label">Features</div>
+            <h2 class="section-title">Everything you need for license compliance</h2>
+
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">&#129302;</div>
+                    <h3>AI-Powered Resolution</h3>
+                    <p>Claude AI analyzes license files, headers, and metadata to identify licenses that rule-based scanners miss. Returns SPDX identifiers with confidence levels.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">&#9898;</div>
+                    <h3>Confidence Scoring</h3>
+                    <p>Every suggestion includes HIGH/MEDIUM/LOW confidence. Review uncertain ones while trusting the rest. Full reasoning provided for audit trails.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">&#128220;</div>
+                    <h3>SBOM Generation</h3>
+                    <p>Export to CycloneDX and SPDX formats. Meet customer requirements and regulatory compliance with industry-standard bills of materials.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">&#128737;</div>
+                    <h3>Policy Enforcement</h3>
+                    <p>Define allowed and denied licenses in YAML. Automatic build failures on violations. AI suggests fixes for policy breaches.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">&#128640;</div>
+                    <h3>CI/CD Ready</h3>
+                    <p>GitHub Action, Docker image, and exit codes for pipeline gates. Automate compliance checks in every build.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">&#128230;</div>
+                    <h3>27+ Package Managers</h3>
+                    <p>Built on OSS Review Toolkit. Maven, Gradle, npm, pip, Cargo, Go modules, and more. Scan any project, any language.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Comparison Section -->
+    <section class="comparison" id="comparison">
+        <div class="container">
+            <div class="section-label">Comparison</div>
+            <h2 class="section-title">How OrtoPed compares</h2>
+            <p class="section-subtitle">The only tool that resolves unknown licenses instead of just flagging them.</p>
+
+            <div class="comparison-table-wrapper">
+                <table class="comparison-table">
+                    <thead>
+                        <tr>
+                            <th>Capability</th>
+                            <th class="highlight">OrtoPed</th>
+                            <th>Snyk</th>
+                            <th>FOSSA</th>
+                            <th>Black Duck</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>License Detection</td>
+                            <td><span class="check">&#10003;</span></td>
+                            <td><span class="check">&#10003;</span></td>
+                            <td><span class="check">&#10003;</span></td>
+                            <td><span class="check">&#10003;</span></td>
+                        </tr>
+                        <tr>
+                            <td>AI License Resolution</td>
+                            <td><span class="check">&#10003;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                        </tr>
+                        <tr>
+                            <td>Confidence Scoring</td>
+                            <td><span class="check">&#10003;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                        </tr>
+                        <tr>
+                            <td>Resolution Reasoning</td>
+                            <td><span class="check">&#10003;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                        </tr>
+                        <tr>
+                            <td>SBOM Generation</td>
+                            <td><span class="check">&#10003;</span></td>
+                            <td><span class="check">&#10003;</span></td>
+                            <td><span class="check">&#10003;</span></td>
+                            <td><span class="check">&#10003;</span></td>
+                        </tr>
+                        <tr>
+                            <td>Policy Enforcement</td>
+                            <td><span class="check">&#10003;</span></td>
+                            <td><span class="check">&#10003;</span></td>
+                            <td><span class="check">&#10003;</span></td>
+                            <td><span class="check">&#10003;</span></td>
+                        </tr>
+                        <tr>
+                            <td>AI Fix Suggestions</td>
+                            <td><span class="check">&#10003;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                        </tr>
+                        <tr>
+                            <td>Self-Hosted Option</td>
+                            <td><span class="check">&#10003;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                            <td><span class="check">&#10003;</span></td>
+                        </tr>
+                        <tr>
+                            <td>Open Source Core</td>
+                            <td><span class="check">&#10003;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                            <td><span class="cross">&#10007;</span></td>
+                        </tr>
+                        <tr>
+                            <td>Starting Price</td>
+                            <td><strong>Free / $49</strong></td>
+                            <td>$98/dev</td>
+                            <td>$500+</td>
+                            <td>Enterprise</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pricing Section -->
+    <section class="pricing" id="pricing">
+        <div class="container">
+            <div class="section-label">Pricing</div>
+            <h2 class="section-title">Simple, transparent pricing</h2>
+            <p class="section-subtitle">Start free. Scale as you grow.</p>
+
+            <div class="pricing-grid">
+                <div class="pricing-card">
+                    <h3>Starter</h3>
+                    <div class="price">Free</div>
+                    <p class="price-note">Forever free</p>
+                    <ul class="pricing-features">
+                        <li>5 scans per month</li>
+                        <li>Up to 100 dependencies</li>
+                        <li>Basic policy rules</li>
+                        <li>Community support</li>
+                    </ul>
+                    <a href="#" class="btn btn-secondary">Get Started</a>
+                </div>
+
+                <div class="pricing-card featured">
+                    <h3>Pro</h3>
+                    <div class="price">$49<span>/month</span></div>
+                    <p class="price-note">Per project</p>
+                    <ul class="pricing-features">
+                        <li>Unlimited scans</li>
+                        <li>Unlimited dependencies</li>
+                        <li>Full policy enforcement</li>
+                        <li>SBOM export (all formats)</li>
+                        <li>Email support</li>
+                    </ul>
+                    <a href="#" class="btn btn-primary">Start Free Trial</a>
+                </div>
+
+                <div class="pricing-card">
+                    <h3>Team</h3>
+                    <div class="price">$199<span>/month</span></div>
+                    <p class="price-note">Up to 10 projects</p>
+                    <ul class="pricing-features">
+                        <li>Everything in Pro</li>
+                        <li>5 team members</li>
+                        <li>API access</li>
+                        <li>Priority support</li>
+                        <li>Custom policies</li>
+                    </ul>
+                    <a href="#" class="btn btn-secondary">Start Free Trial</a>
+                </div>
+
+                <div class="pricing-card">
+                    <h3>Enterprise</h3>
+                    <div class="price">Custom</div>
+                    <p class="price-note">Contact us</p>
+                    <ul class="pricing-features">
+                        <li>Everything in Team</li>
+                        <li>Self-hosted option</li>
+                        <li>SSO / SAML</li>
+                        <li>Dedicated support</li>
+                        <li>Custom integrations</li>
+                    </ul>
+                    <a href="#" class="btn btn-secondary">Contact Sales</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="cta">
+        <div class="container">
+            <h2>Ready to stop curating?</h2>
+            <p>Join teams who've cut their license compliance time by 99%. Start scanning in minutes.</p>
+            <div class="hero-buttons">
+                <a href="#" class="btn btn-primary btn-large">Start Free</a>
+                <a href="https://github.com/vrhunski/ortoped" class="btn btn-secondary btn-large" target="_blank">View on GitHub</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-logo">OrtoPed</div>
+                <div class="footer-links">
+                    <a href="#">Documentation</a>
+                    <a href="#">GitHub</a>
+                    <a href="#">Privacy</a>
+                    <a href="#">Terms</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
