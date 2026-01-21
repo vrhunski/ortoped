@@ -16,6 +16,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Remove local gradle.properties
+        run: rm -f gradle.properties
+
       - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
@@ -55,6 +58,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Remove local gradle.properties
+        run: rm -f gradle.properties
+
       - name: Build Docker image
         run: docker build -t ortoped:test .
 
@@ -89,6 +95,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Remove local gradle.properties
+        run: rm -f gradle.properties
 
       - name: Setup Java 21
         uses: actions/setup-java@v4

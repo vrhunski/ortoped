@@ -4,6 +4,7 @@ build/
 gradle-app.setting
 !gradle-wrapper.jar
 !gradle-wrapper.properties
+gradle.properties
 
 # IntelliJ IDEA
 .idea/
