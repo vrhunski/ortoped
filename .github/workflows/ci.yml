@@ -76,7 +76,7 @@ jobs:
           docker run --rm \
             -v "$(pwd)/reports:/reports" \
             ortoped:test \
-            scan --demo -o /reports/demo-report.json --no-console
+            scan --demo -o /reports/demo-report.json
 
       - name: Verify demo report was created
         run: |

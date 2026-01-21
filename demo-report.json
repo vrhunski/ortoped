@@ -1,0 +1,173 @@
+{
+    "projectName": "demo-project",
+    "projectVersion": "1.0.0-SNAPSHOT",
+    "scanDate": "2025-12-28T14:00:25.471774Z",
+    "dependencies": [
+        {
+            "id": "npm:axios:1.6.0",
+            "name": "axios",
+            "version": "1.6.0",
+            "declaredLicenses": [
+                "MIT"
+            ],
+            "detectedLicenses": [
+                "MIT"
+            ],
+            "concludedLicense": "MIT",
+            "scope": "dependencies",
+            "isResolved": true
+        },
+        {
+            "id": "Maven:org.springframework:spring-core:6.1.0",
+            "name": "spring-core",
+            "version": "6.1.0",
+            "declaredLicenses": [
+                "Apache-2.0"
+            ],
+            "detectedLicenses": [
+                "Apache-2.0"
+            ],
+            "concludedLicense": "Apache-2.0",
+            "scope": "compile",
+            "isResolved": true
+        },
+        {
+            "id": "PyPI:requests:2.31.0",
+            "name": "requests",
+            "version": "2.31.0",
+            "declaredLicenses": [
+                "Apache-2.0"
+            ],
+            "detectedLicenses": [
+                "Apache-2.0"
+            ],
+            "concludedLicense": "Apache-2.0",
+            "scope": "install",
+            "isResolved": true
+        },
+        {
+            "id": "npm:express:4.18.2",
+            "name": "express",
+            "version": "4.18.2",
+            "declaredLicenses": [
+                "MIT"
+            ],
+            "detectedLicenses": [
+                "MIT"
+            ],
+            "concludedLicense": "MIT",
+            "scope": "dependencies",
+            "isResolved": true
+        },
+        {
+            "id": "Maven:com.google.guava:guava:32.1.3",
+            "name": "guava",
+            "version": "32.1.3",
+            "declaredLicenses": [
+                "Apache-2.0"
+            ],
+            "detectedLicenses": [
+                "Apache-2.0"
+            ],
+            "concludedLicense": "Apache-2.0",
+            "scope": "compile",
+            "isResolved": true
+        },
+        {
+            "id": "npm:lodash:4.17.21",
+            "name": "lodash",
+            "version": "4.17.21",
+            "declaredLicenses": [],
+            "detectedLicenses": [],
+            "concludedLicense": null,
+            "scope": "dependencies",
+            "isResolved": false
+        },
+        {
+            "id": "Maven:com.example:custom-lib:2.1.0",
+            "name": "custom-lib",
+            "version": "2.1.0",
+            "declaredLicenses": [],
+            "detectedLicenses": [],
+            "concludedLicense": null,
+            "scope": "dependencies",
+            "isResolved": false
+        },
+        {
+            "id": "PyPI:mysterious-package:1.0.0",
+            "name": "mysterious-package",
+            "version": "1.0.0",
+            "declaredLicenses": [],
+            "detectedLicenses": [],
+            "concludedLicense": null,
+            "scope": "dependencies",
+            "isResolved": false
+        },
+        {
+            "id": "Cargo:serde_json:1.0.108",
+            "name": "serde_json",
+            "version": "1.0.108",
+            "declaredLicenses": [],
+            "detectedLicenses": [],
+            "concludedLicense": null,
+            "scope": "dependencies",
+            "isResolved": false
+        },
+        {
+            "id": "npm:react:18.2.0",
+            "name": "react",
+            "version": "18.2.0",
+            "declaredLicenses": [],
+            "detectedLicenses": [],
+            "concludedLicense": null,
+            "scope": "dependencies",
+            "isResolved": false
+        }
+    ],
+    "summary": {
+        "totalDependencies": 10,
+        "resolvedLicenses": 5,
+        "unresolvedLicenses": 5,
+        "licenseDistribution": {
+            "MIT": 2,
+            "Apache-2.0": 3
+        }
+    },
+    "unresolvedLicenses": [
+        {
+            "dependencyId": "npm:lodash:4.17.21",
+            "dependencyName": "lodash",
+            "licenseText": "Copyright JS Foundation and other contributors <https://js.foundation/>\n\nBased on Underscore.js, copyright Jeremy Ashkenas,\nDocumentCloud and Investigative Reporters & Editors <http://underscorejs.org/>",
+            "licenseUrl": "https://github.com/lodash/lodash/blob/master/LICENSE",
+            "reason": "License file doesn't contain standard SPDX identifier"
+        },
+        {
+            "dependencyId": "Maven:com.example:custom-lib:2.1.0",
+            "dependencyName": "custom-lib",
+            "licenseText": "Permission is hereby granted, free of charge, to any person obtaining a copy of this software...",
+            "licenseUrl": "https://github.com/example/custom-lib/blob/main/LICENSE.txt",
+            "reason": "Non-standard license text format"
+        },
+        {
+            "dependencyId": "PyPI:mysterious-package:1.0.0",
+            "dependencyName": "mysterious-package",
+            "licenseUrl": "https://pypi.org/project/mysterious-package/",
+            "reason": "No license information in package metadata"
+        },
+        {
+            "dependencyId": "Cargo:serde_json:1.0.108",
+            "dependencyName": "serde_json",
+            "licenseText": "Licensed under either of Apache License, Version 2.0 or MIT license at your option.",
+            "licenseUrl": "https://github.com/serde-rs/json",
+            "reason": "Dual license without clear SPDX expression"
+        },
+        {
+            "dependencyId": "npm:react:18.2.0",
+            "dependencyName": "react",
+            "licenseText": "MIT License\n\nCopyright (c) Facebook, Inc. and its affiliates.",
+            "licenseUrl": "https://github.com/facebook/react/blob/main/LICENSE",
+            "reason": "ORT scanner found conflicting license information"
+        }
+    ],
+    "aiEnhanced": true
+}
