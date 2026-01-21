@@ -87,6 +87,13 @@ jobs:
           echo "✅ Demo report created successfully"
           head -20 reports/demo-report.json
 
+      - name: Upload demo report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-report
+          path: reports/demo-report.json
+
   # Code quality checks
   lint:
     name: Code Quality
