@@ -1,4 +1,4 @@
-    # OrtoPed - Architecture Documentation
+        # OrtoPed - Architecture Documentation
 
 ## Executive Summary
 

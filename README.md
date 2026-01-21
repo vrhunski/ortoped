@@ -2,6 +2,8 @@
 
 OrtoPed is an intelligent wrapper around the OSS Review Toolkit (ORT) that leverages AI to automatically resolve unidentified software licenses, significantly reducing manual curation effort.
 
+> **The Name:** "Ortoped" is a play on words combining **ORT** and **Orthopedist**. Just as an orthopedist fixes broken bones, OrtoPed **fixes ORT scanner license curation**.
+
 ## 📚 Documentation
 
 - **[Quick Start Guide](docs/QUICKSTART.md)** - Get started in 5 minutes
