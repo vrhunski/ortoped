@@ -46,12 +46,28 @@ class ScanOrchestrator(
         }
 
         // Step 3: AI enhancement for unresolved licenses
-        if (!enableAiResolution || scanResult.unresolvedLicenses.isEmpty()) {
-            logger.info { "Skipping AI enhancement. Unresolved licenses: ${scanResult.unresolvedLicenses.size}" }
+        logger.info { "Total dependencies found: ${scanResult.dependencies.size}" }
+        logger.info { "Resolved licenses: ${scanResult.summary.resolvedLicenses}" }
+        logger.info { "Unresolved licenses: ${scanResult.unresolvedLicenses.size}" }
+
+        if (scanResult.unresolvedLicenses.isNotEmpty()) {
+            logger.info { "Unresolved dependencies:" }
+            scanResult.unresolvedLicenses.forEach { unresolved ->
+                logger.info { "  - ${unresolved.dependencyName} (${unresolved.dependencyId}): ${unresolved.reason}" }
+            }
+        }
+
+        if (!enableAiResolution) {
+            logger.info { "AI resolution is disabled. Returning scan result without AI enhancement." }
             return scanResult
         }
 
-        logger.info { "Step 3/3: AI-enhancing ${scanResult.unresolvedLicenses.size} unresolved licenses..." }
+        if (scanResult.unresolvedLicenses.isEmpty()) {
+            logger.info { "No unresolved licenses to enhance with AI." }
+            return scanResult
+        }
+
+        logger.info { "Step 3/4: AI-enhancing ${scanResult.unresolvedLicenses.size} unresolved licenses..." }
         val enhancedDependencies = enhanceWithAi(
             scanResult.dependencies,
             scanResult.unresolvedLicenses,
@@ -97,8 +113,13 @@ class ScanOrchestrator(
             }.awaitAll()
 
             suggestions.forEach { (depId, suggestion) ->
-                suggestion?.let {
-                    dependencyMap[depId] = dependencyMap[depId]!!.copy(aiSuggestion = it)
+                if (suggestion != null) {
+                    logger.info { "AI suggestion for $depId: ${suggestion.suggestedLicense} (${suggestion.confidence})" }
+                    dependencyMap[depId]?.let { dep ->
+                        dependencyMap[depId] = dep.copy(aiSuggestion = suggestion)
+                    } ?: logger.warn { "Dependency not found in map: $depId" }
+                } else {
+                    logger.warn { "No AI suggestion returned for $depId" }
                 }
             }
         } else {
@@ -106,9 +127,13 @@ class ScanOrchestrator(
             unresolvedLicenses.forEach { unresolved ->
                 try {
                     val suggestion = licenseResolver.resolveLicense(unresolved)
-                    suggestion?.let {
-                        dependencyMap[unresolved.dependencyId] =
-                            dependencyMap[unresolved.dependencyId]!!.copy(aiSuggestion = it)
+                    if (suggestion != null) {
+                        logger.info { "AI suggestion for ${unresolved.dependencyId}: ${suggestion.suggestedLicense} (${suggestion.confidence})" }
+                        dependencyMap[unresolved.dependencyId]?.let { dep ->
+                            dependencyMap[unresolved.dependencyId] = dep.copy(aiSuggestion = suggestion)
+                        } ?: logger.warn { "Dependency not found in map: ${unresolved.dependencyId}" }
+                    } else {
+                        logger.warn { "No AI suggestion returned for ${unresolved.dependencyId}" }
                     }
                 } catch (e: Exception) {
                     logger.error(e) { "Failed to resolve license for ${unresolved.dependencyName}" }

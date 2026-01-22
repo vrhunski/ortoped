@@ -10,6 +10,7 @@ import com.ortoped.core.model.ScanResult
 import com.ortoped.core.scanner.ScanOrchestrator
 import com.ortoped.core.scanner.ScannerConfig
 import com.ortoped.core.scanner.SimpleScannerWrapper
+import com.ortoped.core.scanner.SourceCodeScanner
 import com.ortoped.core.vcs.RemoteRepositoryHandler
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.*
@@ -78,7 +79,14 @@ class ScanService(
         val resultJson = scan.result
             ?: throw NotFoundException("Scan result not available")
 
-        return json.decodeFromString<ScanResult>(resultJson)
+        // Handle potentially double-encoded JSON from previous jsonb<String> storage
+        val normalizedResultJson = if (resultJson.startsWith("\"") && resultJson.endsWith("\"")) {
+            json.decodeFromString<String>(resultJson)
+        } else {
+            resultJson
+        }
+
+        return json.decodeFromString<ScanResult>(normalizedResultJson)
     }
 
     fun getDependencies(id: String, page: Int = 1, pageSize: Int = 20): DependencyListResponse {
@@ -181,7 +189,12 @@ class ScanService(
                 val scannerConfig = ScannerConfig(
                     enabled = request.enableSourceScan
                 )
-                val scanner = SimpleScannerWrapper()
+                val sourceCodeScanner = if (request.enableSourceScan) {
+                    SourceCodeScanner(scannerConfig)
+                } else {
+                    null
+                }
+                val scanner = SimpleScannerWrapper(sourceCodeScanner)
                 val orchestrator = ScanOrchestrator(
                     scanner = scanner,
                     scannerConfig = scannerConfig
@@ -267,9 +280,15 @@ class ScanService(
     )
 
     private fun ScanEntity.toSummaryResponse(): ScanSummaryResponse {
-        val summaryData = summary?.let {
+        val summaryData = summary?.let { summaryJson ->
             try {
-                json.decodeFromString<Map<String, Int>>(it)
+                // Handle potentially double-encoded JSON from previous jsonb<String> storage
+                val normalizedSummary = if (summaryJson.startsWith("\"") && summaryJson.endsWith("\"")) {
+                    json.decodeFromString<String>(summaryJson)
+                } else {
+                    summaryJson
+                }
+                json.decodeFromString<Map<String, Int>>(normalizedSummary)
             } catch (e: Exception) {
                 null
             }

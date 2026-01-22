@@ -38,6 +38,61 @@ export interface Project {
   createdAt: string
 }
 
+// Policy Configuration Types
+export interface PolicyRule {
+  name: string
+  description: string
+  severity: 'ERROR' | 'WARNING' | 'INFO'
+  action: 'DENY' | 'WARN' | 'ALLOW'
+  enabled: boolean
+  parameters?: Record<string, unknown>
+}
+
+export interface LicenseCategory {
+  name: string
+  licenses: string[]
+}
+
+export interface PolicySettings {
+  failOnError: boolean
+  failOnWarning: boolean
+  acceptAiSuggestions: boolean
+  minimumConfidence: string
+}
+
+export interface PolicyConfig {
+  version: string
+  name: string
+  description: string
+  rules: PolicyRule[]
+  allowedLicenses: string[]
+  deniedLicenses: string[]
+  licenseCategories: LicenseCategory[]
+  exemptions: string[]
+  settings: PolicySettings
+}
+
+export interface PolicyViolation {
+  severity: 'ERROR' | 'WARNING' | 'INFO'
+  rule: string
+  message: string
+  dependency: string
+  license: string
+  suggestion?: string
+}
+
+export interface PolicyReport {
+  policyId: string
+  policyName: string
+  scanId: string
+  passed: boolean
+  errorCount: number
+  warningCount: number
+  infoCount: number
+  violations: PolicyViolation[]
+  evaluatedAt: string
+}
+
 export interface Scan {
   id: string
   projectId: string | null
@@ -150,8 +205,14 @@ export const api = {
   createPolicy: (data: { name: string; config: string; isDefault?: boolean }) =>
     apiClient.post<Policy>('/policies', data),
 
+  updatePolicy: (id: string, data: { name?: string; config?: string; isDefault?: boolean }) =>
+    apiClient.put<Policy>(`/policies/${id}`, data),
+
+  deletePolicy: (id: string) =>
+    apiClient.delete(`/policies/${id}`),
+
   evaluatePolicy: (scanId: string, policyId: string) =>
-    apiClient.post(`/scans/${scanId}/evaluate`, { policyId }),
+    apiClient.post<PolicyReport>(`/scans/${scanId}/evaluate`, { policyId }),
 
   // Auth
   listApiKeys: () =>

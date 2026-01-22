@@ -2,6 +2,7 @@ package com.ortoped.api.plugins
 
 import com.ortoped.api.routes.*
 import com.ortoped.api.service.*
+import com.ortoped.api.repository.ScanRepository
 import io.ktor.server.application.*
 import io.ktor.server.http.content.*
 import io.ktor.server.routing.*
@@ -10,7 +11,8 @@ fun Application.configureRouting(
     projectService: ProjectService,
     scanService: ScanService,
     policyService: PolicyService,
-    authService: AuthService
+    authService: AuthService,
+    scanRepository: ScanRepository
 ) {
     routing {
         // API routes
@@ -18,7 +20,7 @@ fun Application.configureRouting(
             healthRoutes()
             projectRoutes(projectService)
             scanRoutes(scanService)
-            policyRoutes(policyService)
+            policyRoutes(policyService, scanRepository)
             authRoutes(authService)
         }
 

@@ -108,13 +108,28 @@ class PolicyService(
         val resultJson = scan.result
             ?: throw NotFoundException("Scan result not available")
 
-        val scanResult = json.decodeFromString<ScanResult>(resultJson)
+        // Handle potentially double-encoded JSON from previous jsonb<String> storage
+        val normalizedResultJson = if (resultJson.startsWith("\"") && resultJson.endsWith("\"")) {
+            // Unescape the double-encoded JSON string
+            json.decodeFromString<String>(resultJson)
+        } else {
+            resultJson
+        }
+
+        val scanResult = json.decodeFromString<ScanResult>(normalizedResultJson)
 
         // Get policy
         val policy = policyRepository.findById(policyUuid)
             ?: throw NotFoundException("Policy not found: $policyId")
 
-        val policyConfig = json.decodeFromString<PolicyConfig>(policy.config)
+        // Handle potentially double-encoded JSON from previous jsonb<String> storage
+        val normalizedPolicyConfig = if (policy.config.startsWith("\"") && policy.config.endsWith("\"")) {
+            json.decodeFromString<String>(policy.config)
+        } else {
+            policy.config
+        }
+
+        val policyConfig = json.decodeFromString<PolicyConfig>(normalizedPolicyConfig)
 
         // Evaluate
         logger.info { "Evaluating policy '${policy.name}' against scan $scanId" }

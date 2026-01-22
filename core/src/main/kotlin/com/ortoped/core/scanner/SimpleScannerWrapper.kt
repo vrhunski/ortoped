@@ -6,6 +6,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import org.ossreviewtoolkit.analyzer.Analyzer
 import org.ossreviewtoolkit.analyzer.PackageManagerFactory
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
+import org.ossreviewtoolkit.model.config.PackageManagerConfiguration
 import java.io.File
 import java.time.Instant
 import java.util.ServiceLoader
@@ -22,7 +23,7 @@ class SimpleScannerWrapper(
     suspend fun scanProject(
         projectDir: File,
         demoMode: Boolean = false,
-        enableSourceScan: Boolean = false
+        enableSourceScan: Boolean = true
     ): ScanResult {
         logger.info { "Starting scan for project: ${projectDir.absolutePath}" }
         logger.info { "Demo mode: $demoMode" }
@@ -36,8 +37,12 @@ class SimpleScannerWrapper(
         val (ortResult, baseResult) = performRealScan(projectDir)
 
         // Enhance with source code scanner if enabled
-        if (enableSourceScan && sourceCodeScanner != null) {
-            return enhanceWithSourceScan(ortResult, baseResult)
+        if (enableSourceScan) {
+            if (sourceCodeScanner != null) {
+                return enhanceWithSourceScan(ortResult, baseResult)
+            } else {
+                logger.warn { "Source scan requested but SourceCodeScanner is not configured. Skipping source scan." }
+            }
         }
 
         return baseResult
@@ -46,10 +51,19 @@ class SimpleScannerWrapper(
     private fun performRealScan(projectDir: File): Pair<org.ossreviewtoolkit.model.OrtResult?, ScanResult> {
         logger.info { "Starting real ORT scan..." }
 
+        // Workaround for NPM cache permission issues
+        configureNpmCache(projectDir)
+
+        // Ensure lock files exist for NPM projects
+        ensureNpmLockFiles(projectDir)
+
         // Step 1: Configure the analyzer with sensible defaults
         val analyzerConfig = AnalyzerConfiguration(
             allowDynamicVersions = true,  // Handle version ranges
-            skipExcluded = false          // Include all dependencies
+            skipExcluded = false,          // Include all dependencies
+            packageManagers = mapOf(
+                "Npm" to PackageManagerConfiguration() // Explicitly configure Npm with default/empty settings
+            )
         )
 
         val analyzer = Analyzer(analyzerConfig)
@@ -86,6 +100,68 @@ class SimpleScannerWrapper(
 
         // Step 4: Extract packages and convert to OrtoPed format
         return ortResult to convertOrtResultToScanResult(ortResult, projectDir)
+    }
+
+    private fun configureNpmCache(projectDir: File) {
+        try {
+            // Create a local cache directory to avoid permission issues with ~/.npm
+            val cacheDir = projectDir.resolve(".ort-npm-cache")
+            if (!cacheDir.exists()) {
+                cacheDir.mkdirs()
+            }
+
+            val npmrc = projectDir.resolve(".npmrc")
+            val config = "cache=${cacheDir.absolutePath}"
+            
+            if (npmrc.exists()) {
+                val content = npmrc.readText()
+                if (!content.contains(config)) {
+                    npmrc.appendText("\n$config")
+                }
+            } else {
+                npmrc.writeText(config)
+            }
+            logger.info { "Configured local NPM cache at ${cacheDir.absolutePath}" }
+        } catch (e: Exception) {
+            logger.warn { "Failed to configure local NPM cache: ${e.message}" }
+        }
+    }
+
+    private fun ensureNpmLockFiles(projectDir: File) {
+        try {
+            val packageJsonFiles = projectDir.walkTopDown()
+                .filter { it.name == "package.json" }
+                .filter { !it.parentFile.resolve("package-lock.json").exists() &&
+                        !it.parentFile.resolve("yarn.lock").exists() &&
+                        !it.parentFile.resolve("pnpm-lock.yaml").exists() }
+                .toList()
+
+            if (packageJsonFiles.isNotEmpty()) {
+                logger.info { "Found ${packageJsonFiles.size} package.json file(s) without lock files. Generating package-lock.json..." }
+            }
+
+            packageJsonFiles.forEach { packageJson ->
+                logger.info { "Generating package-lock.json for ${packageJson.parentFile.absolutePath}" }
+                try {
+                    val process = ProcessBuilder("npm", "install", "--package-lock-only", "--legacy-peer-deps")
+                        .directory(packageJson.parentFile)
+                        .redirectErrorStream(true)
+                        .start()
+
+                    val exitCode = process.waitFor()
+                    if (exitCode != 0) {
+                        val output = process.inputStream.bufferedReader().readText()
+                        logger.warn { "Failed to generate package-lock.json: $output" }
+                    } else {
+                        logger.info { "Successfully generated package-lock.json" }
+                    }
+                } catch (e: Exception) {
+                    logger.warn { "Error running npm install: ${e.message}" }
+                }
+            }
+        } catch (e: Exception) {
+            logger.warn { "Error checking/generating lock files: ${e.message}" }
+        }
     }
 
     private fun convertOrtResultToScanResult(

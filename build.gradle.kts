@@ -4,7 +4,7 @@ plugins {
 }
 
 // Version catalog for dependency management - must be defined before subprojects access them
-extra["ortVersion"] = "74.1.0"
+extra["ortVersion"] = "76.0.0"
 extra["ktorVersion"] = "2.3.12"
 extra["exposedVersion"] = "0.52.0"
 extra["coroutinesVersion"] = "1.8.1"

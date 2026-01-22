@@ -39,8 +39,8 @@ data class ProjectListResponse(
 @Serializable
 data class TriggerScanRequest(
     val projectId: String,
-    val enableAi: Boolean = true,
-    val enableSourceScan: Boolean = false,
+    val enableAi: Boolean = false,
+    val enableSourceScan: Boolean = true,
     val demoMode: Boolean = false,
     val branch: String? = null,
     val tag: String? = null,

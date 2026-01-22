@@ -35,6 +35,11 @@ const router = createRouter({
       component: () => import('@/views/PoliciesView.vue')
     },
     {
+      path: '/policies/:id',
+      name: 'policy-detail',
+      component: () => import('@/views/PolicyDetailView.vue')
+    },
+    {
       path: '/settings',
       name: 'settings',
       component: () => import('@/views/SettingsView.vue')

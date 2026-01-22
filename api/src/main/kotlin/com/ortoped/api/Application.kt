@@ -48,7 +48,8 @@ fun Application.module() {
         projectService = projectService,
         scanService = scanService,
         policyService = policyService,
-        authService = authService
+        authService = authService,
+        scanRepository = scanRepository
     )
 
     logger.info { "OrtoPed API server started successfully" }

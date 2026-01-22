@@ -2,6 +2,7 @@ package com.ortoped.api.routes
 
 import com.ortoped.api.model.CreatePolicyRequest
 import com.ortoped.api.model.EvaluatePolicyRequest
+import com.ortoped.api.repository.ScanRepository
 import com.ortoped.api.service.PolicyService
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -9,7 +10,7 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 
-fun Route.policyRoutes(policyService: PolicyService) {
+fun Route.policyRoutes(policyService: PolicyService, scanRepository: ScanRepository) {
     route("/policies") {
         // List all policies
         get {
@@ -64,10 +65,6 @@ fun Route.policyRoutes(policyService: PolicyService) {
 
             val request = call.receive<EvaluatePolicyRequest>()
 
-            // Get scan repository from application attributes
-            val scanRepository = call.application.attributes.getOrNull(ScanRepositoryKey)
-                ?: return@post call.respond(HttpStatusCode.InternalServerError, "Service unavailable")
-
             val response = policyService.evaluatePolicy(scanId, request.policyId, scanRepository)
             call.respond(HttpStatusCode.OK, response)
         }
@@ -82,6 +79,3 @@ fun Route.policyRoutes(policyService: PolicyService) {
         }
     }
 }
-
-// Attribute key for storing scan repository
-val ScanRepositoryKey = io.ktor.util.AttributeKey<com.ortoped.api.repository.ScanRepository>("ScanRepository")
