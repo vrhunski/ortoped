@@ -38,4 +38,4 @@ local.properties
 
 # Build outputs
 dist/
-*.jar
+*.jar.env
