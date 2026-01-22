@@ -1,5 +1,7 @@
 rootProject.name = "ortoped"
 
+include(":core", ":cli", ":api")
+
 pluginManagement {
     repositories {
         gradlePluginPortal()

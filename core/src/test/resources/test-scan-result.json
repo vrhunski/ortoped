@@ -1,0 +1,87 @@
+{
+  "projectName": "test-project",
+  "projectVersion": "1.0.0",
+  "scanDate": "2025-12-29T12:00:00Z",
+  "aiEnhanced": true,
+  "summary": {
+    "totalDependencies": 5,
+    "resolvedLicenses": 3,
+    "unresolvedLicenses": 2,
+    "aiResolvedLicenses": 1,
+    "licenseDistribution": {
+      "MIT": 2,
+      "Apache-2.0": 1,
+      "NOASSERTION": 2
+    }
+  },
+  "dependencies": [
+    {
+      "id": "Maven:com.example:lib-mit:1.0.0",
+      "name": "lib-mit",
+      "version": "1.0.0",
+      "declaredLicenses": ["MIT"],
+      "detectedLicenses": [],
+      "concludedLicense": "MIT",
+      "scope": "compile",
+      "isResolved": true,
+      "aiSuggestion": null
+    },
+    {
+      "id": "Maven:com.example:lib-apache:2.0.0",
+      "name": "lib-apache",
+      "version": "2.0.0",
+      "declaredLicenses": ["Apache-2.0"],
+      "detectedLicenses": [],
+      "concludedLicense": "Apache-2.0",
+      "scope": "runtime",
+      "isResolved": true,
+      "aiSuggestion": null
+    },
+    {
+      "id": "Maven:com.example:lib-mit2:1.5.0",
+      "name": "lib-mit2",
+      "version": "1.5.0",
+      "declaredLicenses": ["MIT"],
+      "detectedLicenses": [],
+      "concludedLicense": "MIT",
+      "scope": "test",
+      "isResolved": true,
+      "aiSuggestion": null
+    },
+    {
+      "id": "Maven:com.example:lib-unresolved:3.0.0",
+      "name": "lib-unresolved",
+      "version": "3.0.0",
+      "declaredLicenses": [],
+      "detectedLicenses": [],
+      "concludedLicense": null,
+      "scope": "compile",
+      "isResolved": false,
+      "aiSuggestion": {
+        "suggestedLicense": "MIT License",
+        "confidence": "HIGH",
+        "reasoning": "License text matches MIT template with 98% similarity",
+        "spdxId": "MIT",
+        "alternatives": ["ISC", "BSD-2-Clause"]
+      }
+    },
+    {
+      "id": "Maven:com.example:lib-gpl:1.0.0",
+      "name": "lib-gpl",
+      "version": "1.0.0",
+      "declaredLicenses": ["GPL-3.0-only"],
+      "detectedLicenses": [],
+      "concludedLicense": "GPL-3.0-only",
+      "scope": "compile",
+      "isResolved": true,
+      "aiSuggestion": null
+    }
+  ],
+  "unresolvedLicenses": [
+    {
+      "dependencyId": "Maven:com.example:lib-unresolved:3.0.0",
+      "dependencyName": "lib-unresolved",
+      "reason": "License could not be determined by ORT"
+    }
+  ]
+}

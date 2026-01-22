@@ -1,4 +1,4 @@
-# OrtoPed CLI - AI-Enhanced ORT Scanner
+# OrtoPed API Server
 # Multi-stage Dockerfile for minimal runtime image
 
 # ============================================================================
@@ -7,7 +7,7 @@
 FROM eclipse-temurin:21-jdk-alpine AS builder
 
 # Install git (required for VCS operations)
-RUN apk add --no-cache git
+RUN apk add --no-cache git nodejs npm
 
 WORKDIR /app
 
@@ -26,8 +26,14 @@ COPY core/src core/src
 COPY cli/src cli/src
 COPY api/src api/src
 
-# Build the CLI application
-RUN ./gradlew :cli:installDist --no-daemon
+# Build dashboard (if exists)
+COPY dashboard dashboard
+RUN if [ -d "dashboard" ] && [ -f "dashboard/package.json" ]; then \
+    cd dashboard && npm install && npm run build; \
+    fi
+
+# Build the API application
+RUN ./gradlew :api:installDist --no-daemon
 
 # ============================================================================
 # Stage 2: Minimal runtime image
@@ -40,23 +46,34 @@ RUN apk add --no-cache \
     bash \
     && rm -rf /var/cache/apk/*
 
+# Create app user for security
+RUN addgroup -g 1000 ortoped && \
+    adduser -u 1000 -G ortoped -s /bin/sh -D ortoped
+
 # Create app directory
 WORKDIR /app
 
 # Copy built application from builder stage
-COPY --from=builder /app/cli/build/install/cli .
+COPY --from=builder /app/api/build/install/api .
 
-# Create volume mount points for projects and reports
-VOLUME ["/projects", "/reports"]
+# Create logs directory
+RUN mkdir -p /app/logs && chown -R ortoped:ortoped /app
+
+# Switch to non-root user
+USER ortoped
+
+# Expose port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/v1/health || exit 1
 
 # Set entrypoint
-ENTRYPOINT ["/app/bin/cli"]
-
-# Default command: show help
-CMD ["--help"]
+ENTRYPOINT ["/app/bin/api"]
 
 # Labels
-LABEL org.opencontainers.image.title="OrtoPed CLI"
-LABEL org.opencontainers.image.description="AI-enhanced license compliance scanning with ORT"
+LABEL org.opencontainers.image.title="OrtoPed API"
+LABEL org.opencontainers.image.description="OrtoPed REST API server with Vue.js dashboard"
 LABEL org.opencontainers.image.version="1.0.0"
 LABEL org.opencontainers.image.vendor="OrtoPed Project"

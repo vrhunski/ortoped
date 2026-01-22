@@ -1,59 +1,69 @@
 version: '3.8'
 
 services:
-  # OrtoPed scanner service
-  ortoped:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: ortoped:latest
-    container_name: ortoped-scanner
-    volumes:
-      # Mount your project directory (read-only)
-      - ./projects:/projects:ro
-      # Mount directory for scan reports
-      - ./reports:/reports
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: ortoped-postgres
     environment:
-      # Required for AI license resolution
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-    # Default command: scan the mounted project
-    command: scan -p /projects/myproject -o /reports/ortoped-report.json
+      POSTGRES_USER: ortoped
+      POSTGRES_PASSWORD: ortoped
+      POSTGRES_DB: ortoped
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ortoped"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ortoped-network
 
-  # Example: Scan with policy evaluation
-  ortoped-policy:
+  # OrtoPed API Server
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: ortoped-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=jdbc:postgresql://postgres:5432/ortoped
+      - DATABASE_USER=ortoped
+      - DATABASE_PASSWORD=ortoped
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - JWT_SECRET=${JWT_SECRET:-ortoped-development-secret-change-in-production}
+      - PORT=8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - ortoped-network
+
+  # OrtoPed CLI scanner service (optional - for running scans)
+  cli:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ortoped:latest
-    container_name: ortoped-policy
+    container_name: ortoped-cli
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     volumes:
       - ./projects:/projects:ro
       - ./reports:/reports
-      - ./examples:/policies:ro
-    environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-    command: |
-      sh -c "
-        /app/bin/ortoped scan -p /projects/myproject -o /reports/scan.json &&
-        /app/bin/ortoped policy -i /reports/scan.json -p /policies/default-policy.yaml -o /reports/policy-report.json
-      "
     profiles:
-      - policy
+      - cli
+    networks:
+      - ortoped-network
+    command: scan -p /projects/myproject -o /reports/ortoped-report.json --demo
 
-  # Example: Generate SBOM
-  ortoped-sbom:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: ortoped:latest
-    container_name: ortoped-sbom
-    volumes:
-      - ./reports:/reports
-    command: sbom -i /reports/scan.json -f cyclonedx-json -o /reports/project.cdx.json
-    profiles:
-      - sbom
+volumes:
+  postgres_data:
 
-# Default network
 networks:
-  default:
+  ortoped-network:
     name: ortoped-network

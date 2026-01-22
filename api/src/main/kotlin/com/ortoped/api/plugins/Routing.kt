@@ -1,0 +1,37 @@
+package com.ortoped.api.plugins
+
+import com.ortoped.api.routes.*
+import com.ortoped.api.service.*
+import io.ktor.server.application.*
+import io.ktor.server.http.content.*
+import io.ktor.server.routing.*
+
+fun Application.configureRouting(
+    projectService: ProjectService,
+    scanService: ScanService,
+    policyService: PolicyService,
+    authService: AuthService
+) {
+    routing {
+        // API routes
+        route("/api/v1") {
+            healthRoutes()
+            projectRoutes(projectService)
+            scanRoutes(scanService)
+            policyRoutes(policyService)
+            authRoutes(authService)
+        }
+
+        // Serve Vue.js static files (dashboard)
+        staticResources("/", "static") {
+            default("index.html")
+        }
+
+        // Fallback to index.html for SPA routing
+        singlePageApplication {
+            useResources = true
+            filesPath = "static"
+            defaultPage = "index.html"
+        }
+    }
+}

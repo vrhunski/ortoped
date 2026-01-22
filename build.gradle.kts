@@ -1,92 +1,38 @@
 plugins {
-    kotlin("jvm") version "2.1.0"
-    kotlin("plugin.serialization") version "2.1.0"
-    application
+    kotlin("jvm") version "2.1.0" apply false
+    kotlin("plugin.serialization") version "2.1.0" apply false
 }
 
-group = "com.ortoped"
-version = "1.0.0-SNAPSHOT"
+// Version catalog for dependency management - must be defined before subprojects access them
+extra["ortVersion"] = "74.1.0"
+extra["ktorVersion"] = "2.3.12"
+extra["exposedVersion"] = "0.52.0"
+extra["coroutinesVersion"] = "1.8.1"
+extra["serializationVersion"] = "1.7.1"
 
-repositories {
-    mavenCentral()
-    maven("https://jitpack.io")
-    maven("https://repo.gradle.org/gradle/libs-releases")  // For Gradle Tooling API
-}
+allprojects {
+    group = "com.ortoped"
+    version = "1.0.0-SNAPSHOT"
 
-dependencies {
-    // Kotlin
-    implementation(kotlin("stdlib"))
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
-
-    // ORT Core dependencies - version 74.1.0 (latest as of Dec 2025)
-    val ortVersion = "74.1.0"
-    implementation("org.ossreviewtoolkit:analyzer:$ortVersion")
-    implementation("org.ossreviewtoolkit:model:$ortVersion")
-
-    // ORT Scanner for source code license detection
-    implementation("org.ossreviewtoolkit:scanner:$ortVersion")
-    implementation("org.ossreviewtoolkit:downloader:$ortVersion")
-
-    // Scanner plugins
-    implementation(platform("org.ossreviewtoolkit.plugins:scanners:$ortVersion"))
-    implementation("org.ossreviewtoolkit.plugins.scanners:scancode-scanner")
-
-    // VCS plugins (for Git cloning support)
-    implementation(platform("org.ossreviewtoolkit.plugins:version-control-systems:$ortVersion"))
-    implementation("org.ossreviewtoolkit.plugins.versioncontrolsystems:git-version-control-system")
-
-    // Package manager plugins platform - imports all 23 package managers
-    implementation(platform("org.ossreviewtoolkit.plugins:package-managers:$ortVersion"))
-    implementation("org.ossreviewtoolkit.plugins.packagemanagers:gradle-package-manager") {
-        exclude(group = "org.ossreviewtoolkit.plugins.packagemanagers", module = "gradle-inspector")
+    repositories {
+        mavenCentral()
+        maven("https://jitpack.io")
+        maven("https://repo.gradle.org/gradle/libs-releases")
     }
-    implementation("org.ossreviewtoolkit.plugins.packagemanagers:maven-package-manager")
-    implementation("org.ossreviewtoolkit.plugins.packagemanagers:node-package-manager")
-    implementation("org.ossreviewtoolkit.plugins.packagemanagers:python-package-manager")
-    implementation("org.ossreviewtoolkit.plugins.packagemanagers:cargo-package-manager")
-
-    // HTTP client for Claude API calls (no official Kotlin SDK, using standard HTTP)
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-
-    // SBOM Generation Libraries
-    implementation("org.cyclonedx:cyclonedx-core-java:9.0.4")
-    implementation("org.spdx:java-spdx-library:1.1.11")
-    implementation("org.spdx:spdx-jackson-store:1.1.9")
-
-    // YAML parsing for policy files
-    implementation("com.charleskorn.kaml:kaml:0.56.0")
-
-    // CLI
-    implementation("com.github.ajalt.clikt:clikt:4.4.0")
-
-    // Logging
-    implementation("io.github.oshai:kotlin-logging-jvm:6.0.3")
-    implementation("ch.qos.logback:logback-classic:1.5.6")
-
-    // Testing
-    testImplementation(kotlin("test"))
-    testImplementation("io.mockk:mockk:1.13.12")
-    testImplementation("org.junit.jupiter:junit-jupiter-params:5.10.2")
-    testImplementation("com.squareup.okhttp3:okhttp:4.12.0")
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
 
-kotlin {
-    jvmToolchain(21)
-}
+subprojects {
+    apply(plugin = "org.jetbrains.kotlin.jvm")
+    apply(plugin = "org.jetbrains.kotlin.plugin.serialization")
 
-application {
-    mainClass.set("com.ortoped.MainKt")
-}
+    configure<org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension> {
+        jvmToolchain(21)
+        compilerOptions {
+            freeCompilerArgs.add("-Xjsr305=strict")
+        }
+    }
 
-tasks.test {
-    useJUnitPlatform()
-}
-
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
-    kotlinOptions {
-        freeCompilerArgs += listOf("-Xjsr305=strict")
-        jvmTarget = "21"
+    tasks.withType<Test> {
+        useJUnitPlatform()
     }
 }
