@@ -15,9 +15,12 @@ import java.time.Duration
 
 private val logger = KotlinLogging.logger {}
 
-class LicenseResolver(
-    private val apiKey: String = System.getenv("ANTHROPIC_API_KEY") ?: ""
-) {
+// Load API key once at class initialization - returns null if not set
+private val anthropicApiKey: String? by lazy {
+    System.getenv("ANTHROPIC_API_KEY")?.takeIf { it.isNotBlank() }
+}
+
+class LicenseResolver {
     private val client = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(30))
         .build()
@@ -28,15 +31,16 @@ class LicenseResolver(
     }
 
     suspend fun resolveLicense(unresolved: UnresolvedLicense): LicenseSuggestion? {
-        if (apiKey.isBlank()) {
-            logger.warn { "ANTHROPIC_API_KEY not set. Skipping AI resolution." }
+        val apiKey = anthropicApiKey
+        if (apiKey == null) {
+            logger.warn { "ANTHROPIC_API_KEY not set. Skipping AI resolution for: ${unresolved.dependencyName}" }
             return null
         }
 
         logger.info { "Resolving license for: ${unresolved.dependencyName}" }
 
         val prompt = buildPrompt(unresolved)
-        val response = callClaudeAPI(prompt)
+        val response = callClaudeAPI(prompt, apiKey)
 
         return parseLicenseSuggestion(response)
     }
@@ -77,7 +81,7 @@ class LicenseResolver(
         }
     }
 
-    private fun callClaudeAPI(prompt: String): String {
+    private fun callClaudeAPI(prompt: String, apiKey: String): String {
         val requestBody = """
             {
               "model": "claude-sonnet-4-20250514",
