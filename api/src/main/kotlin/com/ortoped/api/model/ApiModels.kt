@@ -39,8 +39,9 @@ data class ProjectListResponse(
 @Serializable
 data class TriggerScanRequest(
     val projectId: String,
-    val enableAi: Boolean = false,
-    val enableSourceScan: Boolean = true,
+    val enableAi: Boolean = true,
+    val enableSourceScan: Boolean = false,
+    val parallelAiCalls: Boolean = true,
     val demoMode: Boolean = false,
     val branch: String? = null,
     val tag: String? = null,
@@ -68,6 +69,7 @@ data class ScanSummaryResponse(
     val resolvedLicenses: Int,
     val unresolvedLicenses: Int,
     val aiResolvedLicenses: Int,
+    val startedAt: String?,
     val completedAt: String?
 )
 

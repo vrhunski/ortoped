@@ -205,7 +205,7 @@ class ScanService(
                     projectDir = projectDir,
                     enableAiResolution = request.enableAi,
                     enableSourceScan = request.enableSourceScan,
-                    parallelAiCalls = true,
+                    parallelAiCalls = request.parallelAiCalls,
                     demoMode = request.demoMode
                 )
 
@@ -302,6 +302,7 @@ class ScanService(
             resolvedLicenses = summaryData?.get("resolvedLicenses") ?: 0,
             unresolvedLicenses = summaryData?.get("unresolvedLicenses") ?: 0,
             aiResolvedLicenses = summaryData?.get("aiResolvedLicenses") ?: 0,
+            startedAt = startedAt,
             completedAt = completedAt
         )
     }

@@ -112,6 +112,7 @@ export interface ScanSummary {
   resolvedLicenses: number
   unresolvedLicenses: number
   aiResolvedLicenses: number
+  startedAt: string | null
   completedAt: string | null
 }
 
@@ -187,8 +188,13 @@ export const api = {
       { params: { page, pageSize } }
     ),
 
-  triggerScan: (data: { projectId: string; enableAi?: boolean; demoMode?: boolean }) =>
-    apiClient.post<Scan>('/scans', data),
+  triggerScan: (data: {
+    projectId: string
+    enableAi?: boolean
+    enableSourceScan?: boolean
+    parallelAiCalls?: boolean
+    demoMode?: boolean
+  }) => apiClient.post<Scan>('/scans', data),
 
   generateSbom: (scanId: string, format = 'cyclonedx-json') =>
     apiClient.post(`/scans/${scanId}/sbom`, { format }),

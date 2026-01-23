@@ -1,13 +1,74 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
 import { api, type Project, type ScanSummary } from '@/api/client'
+import InputSwitch from 'primevue/inputswitch'
+import { useToast } from 'primevue/usetoast'
 
+const toast = useToast()
 const route = useRoute()
 const project = ref<Project | null>(null)
 const scans = ref<ScanSummary[]>([])
 const loading = ref(true)
 const scanning = ref(false)
+
+// Scan configuration with smart defaults
+const scanConfig = ref({
+  enableAi: true,
+  enableSourceScan: false,
+  parallelAiCalls: true
+})
+
+const SCAN_CONFIG_KEY = 'ortoped.scanConfig'
+
+// Polling state
+let pollInterval: number | null = null
+const POLL_INTERVAL_MS = 3000
+
+// Check if any scan is in progress
+const hasActiveScans = computed(() =>
+  scans.value.some(s => s.status === 'pending' || s.status === 'scanning')
+)
+
+// Load saved scan config from localStorage
+function loadScanConfig() {
+  const saved = localStorage.getItem(SCAN_CONFIG_KEY)
+  if (saved) {
+    try {
+      scanConfig.value = { ...scanConfig.value, ...JSON.parse(saved) }
+    } catch (e) {
+      console.warn('Failed to parse saved scan config')
+    }
+  }
+}
+
+// Save scan config to localStorage
+function saveScanConfig() {
+  localStorage.setItem(SCAN_CONFIG_KEY, JSON.stringify(scanConfig.value))
+}
+
+// Format duration from timestamps
+function formatDuration(startedAt: string | null, completedAt: string | null): string {
+  if (!startedAt) return '-'
+
+  const start = new Date(startedAt).getTime()
+  const end = completedAt ? new Date(completedAt).getTime() : Date.now()
+  const durationMs = end - start
+
+  if (durationMs < 0) return '-'
+
+  const seconds = Math.floor(durationMs / 1000)
+  const minutes = Math.floor(seconds / 60)
+  const hours = Math.floor(minutes / 60)
+
+  if (hours > 0) {
+    return `${hours}h ${minutes % 60}m ${seconds % 60}s`
+  } else if (minutes > 0) {
+    return `${minutes}m ${seconds % 60}s`
+  } else {
+    return `${seconds}s`
+  }
+}
 
 async function fetchData() {
   loading.value = true
@@ -25,20 +86,89 @@ async function fetchData() {
   }
 }
 
-async function triggerScan(demoMode = false) {
+async function refreshScans() {
   if (!project.value) return
-  scanning.value = true
   try {
-    await api.triggerScan({
-      projectId: project.value.id,
-      enableAi: true,
-      demoMode
-    })
-    // Refresh scans list
     const scansRes = await api.listScans({ projectId: project.value.id, pageSize: 20 })
     scans.value = scansRes.data.scans
   } catch (e) {
+    console.error('Failed to refresh scans', e)
+  }
+}
+
+function startPolling() {
+  if (pollInterval) return // Already polling
+
+  pollInterval = window.setInterval(async () => {
+    if (!hasActiveScans.value) {
+      stopPolling()
+      return
+    }
+    await refreshScans()
+  }, POLL_INTERVAL_MS)
+}
+
+function stopPolling() {
+  if (pollInterval) {
+    clearInterval(pollInterval)
+    pollInterval = null
+  }
+}
+
+async function triggerScan(demoMode = false) {
+  if (!project.value) return
+  scanning.value = true
+
+  // Save user preferences
+  saveScanConfig()
+
+  try {
+    if (demoMode) {
+      // Demo mode: fixed config
+      await api.triggerScan({
+        projectId: project.value.id,
+        enableAi: true,
+        enableSourceScan: false,
+        parallelAiCalls: true,
+        demoMode: true
+      })
+      toast.add({
+        severity: 'success',
+        summary: 'Demo Scan Started',
+        detail: 'Demo scan started with default settings',
+        life: 3000
+      })
+    } else {
+      // Normal scan: use user config
+      await api.triggerScan({
+        projectId: project.value.id,
+        enableAi: scanConfig.value.enableAi,
+        enableSourceScan: scanConfig.value.enableSourceScan,
+        parallelAiCalls: scanConfig.value.parallelAiCalls,
+        demoMode: false
+      })
+      const configSummary = [
+        scanConfig.value.enableAi ? 'AI' : null,
+        scanConfig.value.enableSourceScan ? 'Source Scan' : null,
+        scanConfig.value.parallelAiCalls && scanConfig.value.enableAi ? 'Parallel' : null
+      ].filter(Boolean).join(', ')
+      toast.add({
+        severity: 'success',
+        summary: 'Scan Started',
+        detail: configSummary ? `Scan started with: ${configSummary}` : 'Scan started',
+        life: 3000
+      })
+    }
+    await refreshScans()
+    startPolling()
+  } catch (e) {
     console.error('Failed to trigger scan', e)
+    toast.add({
+      severity: 'error',
+      summary: 'Scan Failed',
+      detail: 'Failed to start scan',
+      life: 5000
+    })
   } finally {
     scanning.value = false
   }
@@ -53,7 +183,23 @@ function getStatusClass(status: string) {
   }
 }
 
-onMounted(fetchData)
+// Watch for active scans and manage polling
+watch(hasActiveScans, (hasActive) => {
+  if (hasActive) {
+    startPolling()
+  } else {
+    stopPolling()
+  }
+})
+
+onMounted(() => {
+  loadScanConfig()
+  fetchData()
+})
+
+onUnmounted(() => {
+  stopPolling()
+})
 </script>
 
 <template>
@@ -80,7 +226,41 @@ onMounted(fetchData)
             </span>
           </div>
         </div>
-        <div class="header-actions">
+      </header>
+
+      <!-- Scan Configuration -->
+      <div class="section scan-config-section">
+        <h2>Scan Configuration</h2>
+        <div class="scan-config-panel">
+          <div class="config-row">
+            <div class="config-info">
+              <span class="config-label">Enable AI Analysis</span>
+              <span class="config-description">Use Claude to resolve unknown licenses</span>
+            </div>
+            <InputSwitch v-model="scanConfig.enableAi" />
+          </div>
+
+          <div class="config-row">
+            <div class="config-info">
+              <span class="config-label">Source Code Scan</span>
+              <span class="config-description">Deep scan with ScanCode (slower)</span>
+            </div>
+            <InputSwitch v-model="scanConfig.enableSourceScan" />
+          </div>
+
+          <div class="config-row" :class="{ disabled: !scanConfig.enableAi }">
+            <div class="config-info">
+              <span class="config-label">Parallel AI Processing</span>
+              <span class="config-description">Process packages concurrently</span>
+            </div>
+            <InputSwitch
+              v-model="scanConfig.parallelAiCalls"
+              :disabled="!scanConfig.enableAi"
+            />
+          </div>
+        </div>
+
+        <div class="scan-actions">
           <button
             class="btn btn-secondary"
             @click="triggerScan(true)"
@@ -93,14 +273,19 @@ onMounted(fetchData)
             @click="triggerScan(false)"
             :disabled="scanning || !project.repositoryUrl"
           >
-            <i class="pi pi-refresh"></i>
+            <i class="pi pi-refresh" :class="{ 'pi-spin': scanning }"></i>
             {{ scanning ? 'Starting...' : 'Run Scan' }}
           </button>
         </div>
-      </header>
+      </div>
 
       <div class="section">
-        <h2>Scan History</h2>
+        <div class="section-header">
+          <h2>Scan History</h2>
+          <span v-if="hasActiveScans" class="scanning-indicator">
+            <i class="pi pi-spin pi-spinner"></i> Scanning...
+          </span>
+        </div>
 
         <div v-if="scans.length === 0" class="empty-state">
           <p>No scans yet. Run your first scan to see results here.</p>
@@ -114,6 +299,7 @@ onMounted(fetchData)
               <th>Resolved</th>
               <th>Unresolved</th>
               <th>AI Resolved</th>
+              <th>Duration</th>
               <th>Completed</th>
               <th></th>
             </tr>
@@ -122,6 +308,7 @@ onMounted(fetchData)
             <tr v-for="scan in scans" :key="scan.id">
               <td>
                 <span :class="['status-badge', getStatusClass(scan.status)]">
+                  <i v-if="scan.status === 'scanning'" class="pi pi-spin pi-spinner status-spinner"></i>
                   {{ scan.status }}
                 </span>
               </td>
@@ -129,6 +316,7 @@ onMounted(fetchData)
               <td>{{ scan.resolvedLicenses }}</td>
               <td>{{ scan.unresolvedLicenses }}</td>
               <td>{{ scan.aiResolvedLicenses }}</td>
+              <td class="duration-cell">{{ formatDuration(scan.startedAt, scan.completedAt) }}</td>
               <td>{{ scan.completedAt ? new Date(scan.completedAt).toLocaleString() : '-' }}</td>
               <td>
                 <RouterLink :to="`/scans/${scan.id}`" class="btn btn-small">
@@ -190,11 +378,6 @@ onMounted(fetchData)
   gap: 0.5rem;
 }
 
-.header-actions {
-  display: flex;
-  gap: 0.75rem;
-}
-
 .btn {
   display: inline-flex;
   align-items: center;
@@ -226,6 +409,15 @@ onMounted(fetchData)
   color: #475569;
 }
 
+.btn-secondary:hover:not(:disabled) {
+  background: #cbd5e1;
+}
+
+.btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .btn-small {
   padding: 0.5rem 1rem;
   font-size: 0.875rem;
@@ -239,6 +431,7 @@ onMounted(fetchData)
   border-radius: 1rem;
   padding: 1.5rem;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  margin-bottom: 1.5rem;
 }
 
 .section h2 {
@@ -247,6 +440,82 @@ onMounted(fetchData)
   color: #1e293b;
 }
 
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.section-header h2 {
+  margin: 0;
+}
+
+.scanning-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #d97706;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* Scan Configuration Styles */
+.scan-config-section h2 {
+  margin-bottom: 1rem;
+}
+
+.scan-config-panel {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 1.5rem;
+}
+
+.config-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #e2e8f0;
+  transition: background-color 0.2s;
+}
+
+.config-row:last-child {
+  border-bottom: none;
+}
+
+.config-row:hover {
+  background: #f1f5f9;
+}
+
+.config-row.disabled {
+  opacity: 0.5;
+}
+
+.config-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.config-label {
+  font-weight: 500;
+  color: #334155;
+}
+
+.config-description {
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+.scan-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+/* Data Table */
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -266,7 +535,9 @@ onMounted(fetchData)
 }
 
 .status-badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
   padding: 0.25rem 0.75rem;
   border-radius: 9999px;
   font-size: 0.75rem;
@@ -274,10 +545,20 @@ onMounted(fetchData)
   text-transform: capitalize;
 }
 
+.status-spinner {
+  font-size: 0.625rem;
+}
+
 .status-success { background: #d1fae5; color: #059669; }
 .status-warning { background: #fef3c7; color: #d97706; }
 .status-error { background: #fee2e2; color: #dc2626; }
 .status-pending { background: #e2e8f0; color: #64748b; }
+
+.duration-cell {
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+  font-size: 0.875rem;
+  color: #475569;
+}
 
 .loading, .empty-state {
   text-align: center;
