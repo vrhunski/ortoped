@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
-import { api, type Scan, type Dependency, type Policy, type PolicyReport } from '@/api/client'
+import { api, type Scan, type Dependency, type Policy, type PolicyReport, type SpdxLicenseDetailResponse, type ReportSummary, type CurationSession } from '@/api/client'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Button from 'primevue/button'
 import Dropdown from 'primevue/dropdown'
 import Badge from 'primevue/badge'
 import { useToast } from 'primevue/usetoast'
+import LicenseDetailPopup from '@/components/LicenseDetailPopup.vue'
 
 const route = useRoute()
 const toast = useToast()
@@ -23,6 +24,17 @@ const policies = ref<Policy[]>([])
 const selectedPolicyId = ref<string | null>(null)
 const evaluating = ref(false)
 const policyReport = ref<PolicyReport | null>(null)
+
+// License popup
+const showLicensePopup = ref(false)
+const selectedLicense = ref<SpdxLicenseDetailResponse | null>(null)
+const loadingLicense = ref(false)
+const licenseError = ref<string | null>(null)
+
+// Report & Curation
+const reportSummary = ref<ReportSummary | null>(null)
+const curationSession = ref<CurationSession | null>(null)
+const downloadingReport = ref(false)
 
 const filteredDependencies = computed(() => {
   let deps = [...dependencies.value]
@@ -94,6 +106,12 @@ async function fetchData() {
       }
 
       dependencies.value = allDependencies
+
+      // Fetch report summary and curation session in parallel
+      await Promise.all([
+        fetchReportSummary(),
+        fetchCurationSession()
+      ])
     }
   } catch (e) {
     console.error('Failed to fetch scan data', e)
@@ -170,6 +188,83 @@ async function downloadSbom(format: string) {
   }
 }
 
+// Report & Curation functions
+async function fetchReportSummary() {
+  try {
+    const response = await api.getReportSummary(route.params.id as string)
+    reportSummary.value = response.data
+  } catch (e) {
+    console.error('Failed to fetch report summary', e)
+  }
+}
+
+async function fetchCurationSession() {
+  try {
+    const response = await api.getCurationSessionByScan(route.params.id as string)
+    curationSession.value = response.data
+  } catch (e) {
+    // No curation session exists yet - that's OK
+    curationSession.value = null
+  }
+}
+
+async function downloadReport(format: 'json' | 'html') {
+  downloadingReport.value = true
+  try {
+    const response = await api.generateReport(route.params.id as string, {
+      format,
+      includePolicy: true,
+      includeCuration: true,
+      includeAuditTrail: true,
+      includeDependencyDetails: true
+    })
+
+    const content = response.data.content
+    const filename = response.data.filename
+    const mimeType = format === 'html' ? 'text/html' : 'application/json'
+
+    const blob = new Blob([content], { type: mimeType })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+
+    toast.add({ severity: 'success', summary: 'Success', detail: `Report downloaded as ${format.toUpperCase()}`, life: 2000 })
+  } catch (e) {
+    console.error('Failed to download report', e)
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to generate report', life: 3000 })
+  } finally {
+    downloadingReport.value = false
+  }
+}
+
+async function downloadOrtExport() {
+  downloadingReport.value = true
+  try {
+    const response = await api.downloadOrtExport(route.params.id as string)
+
+    const content = response.data.content
+    const filename = response.data.filename
+
+    const blob = new Blob([content], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+
+    toast.add({ severity: 'success', summary: 'Success', detail: 'ORT export downloaded', life: 2000 })
+  } catch (e) {
+    console.error('Failed to download ORT export', e)
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to generate ORT export', life: 3000 })
+  } finally {
+    downloadingReport.value = false
+  }
+}
+
 function getConfidenceClass(confidence: string) {
   switch (confidence) {
     case 'HIGH': return 'confidence-high'
@@ -185,6 +280,76 @@ function getSeverityColor(severity: string): 'danger' | 'warning' | 'info' | 'se
     case 'INFO': return 'info'
     default: return 'secondary'
   }
+}
+
+// License popup functions
+async function fetchLicenseDetails(licenseId: string) {
+  loadingLicense.value = true
+  licenseError.value = null
+  selectedLicense.value = null
+  try {
+    const response = await api.getSpdxLicense(licenseId)
+    selectedLicense.value = response.data
+  } catch (e) {
+    console.error('Failed to fetch license details', e)
+    licenseError.value = 'Failed to load license details'
+  } finally {
+    loadingLicense.value = false
+  }
+}
+
+function onLicenseHover(event: MouseEvent, licenseId: string | undefined) {
+  if (!licenseId) return
+  showLicensePopup.value = true
+  fetchLicenseDetails(licenseId)
+  setTimeout(() => {
+    const popup = document.querySelector('.license-popup') as HTMLElement
+    if (popup) {
+      let left = event.pageX + 10
+      let top = event.pageY + 10
+      const rect = popup.getBoundingClientRect()
+      if (left + rect.width > window.innerWidth) {
+        left = event.pageX - rect.width - 10
+      }
+      if (top + rect.height > window.innerHeight) {
+        top = event.pageY - rect.height - 10
+      }
+      popup.style.left = left + 'px'
+      popup.style.top = top + 'px'
+    }
+  }, 10)
+}
+
+let hidePopupTimeout: ReturnType<typeof setTimeout> | null = null
+
+function onLicenseLeave() {
+  // Delay hiding to allow moving mouse to popup
+  hidePopupTimeout = setTimeout(() => {
+    showLicensePopup.value = false
+    setTimeout(() => {
+      selectedLicense.value = null
+      licenseError.value = null
+      loadingLicense.value = false
+    }, 300)
+  }, 200)
+}
+
+function onPopupEnter() {
+  // Cancel hide if mouse enters popup
+  if (hidePopupTimeout) {
+    clearTimeout(hidePopupTimeout)
+    hidePopupTimeout = null
+  }
+}
+
+function onPopupLeave() {
+  // Hide popup when mouse leaves it
+  showLicensePopup.value = false
+  setTimeout(() => {
+    selectedLicense.value = null
+    licenseError.value = null
+    loadingLicense.value = false
+  }, 300)
 }
 
 onMounted(fetchData)
@@ -214,6 +379,9 @@ onMounted(fetchData)
         </div>
         <div class="header-actions" v-if="scan.status === 'complete'">
           <Button label="Export SBOM" icon="pi pi-download" severity="secondary" @click="downloadSbom('cyclonedx-json')" />
+          <Button label="Report (JSON)" icon="pi pi-file" severity="secondary" @click="downloadReport('json')" :loading="downloadingReport" />
+          <Button label="Report (HTML)" icon="pi pi-file" severity="secondary" @click="downloadReport('html')" :loading="downloadingReport" />
+          <Button label="ORT Export" icon="pi pi-share-alt" severity="secondary" @click="downloadOrtExport" :loading="downloadingReport" title="Export in ORT Evaluator format" />
         </div>
       </header>
 
@@ -291,6 +459,40 @@ onMounted(fetchData)
           <p v-if="policies.length === 0" class="no-policies">
             No policies available. <RouterLink to="/policies">Create a policy</RouterLink> to run compliance checks.
           </p>
+        </div>
+
+        <!-- Curation Section -->
+        <div class="section curation-section">
+          <div class="section-header">
+            <h2><i class="pi pi-check-square"></i> License Curation</h2>
+          </div>
+          <div v-if="curationSession" class="curation-status">
+            <div class="curation-info">
+              <Badge
+                :value="curationSession.status"
+                :severity="curationSession.status === 'APPROVED' ? 'success' : curationSession.status === 'IN_PROGRESS' ? 'warning' : 'info'"
+              />
+              <div class="curation-stats">
+                <span><strong>{{ curationSession.statistics.total - curationSession.statistics.pending }}</strong> / {{ curationSession.statistics.total }} reviewed</span>
+                <span class="stat-item accepted"><i class="pi pi-check"></i> {{ curationSession.statistics.accepted }} accepted</span>
+                <span class="stat-item rejected"><i class="pi pi-times"></i> {{ curationSession.statistics.rejected }} rejected</span>
+                <span class="stat-item modified"><i class="pi pi-pencil"></i> {{ curationSession.statistics.modified }} modified</span>
+              </div>
+            </div>
+            <RouterLink :to="`/curations/${curationSession.scanId}`">
+              <Button
+                :label="curationSession.status === 'APPROVED' ? 'View Curation' : 'Continue Curation'"
+                :icon="curationSession.status === 'APPROVED' ? 'pi pi-eye' : 'pi pi-arrow-right'"
+                :severity="curationSession.status === 'APPROVED' ? 'secondary' : 'primary'"
+              />
+            </RouterLink>
+          </div>
+          <div v-else class="no-curation">
+            <p>No curation session started for this scan. Start one to review and approve AI-suggested licenses.</p>
+            <RouterLink to="/curations">
+              <Button label="Start Curation" icon="pi pi-plus" />
+            </RouterLink>
+          </div>
         </div>
 
         <!-- Violations Section -->
@@ -402,10 +604,39 @@ onMounted(fetchData)
                 <span v-else class="no-suggestion">-</span>
               </template>
             </Column>
+
+            <Column header="SPDX Suggestion" style="min-width: 200px">
+              <template #body="{ data }">
+                <div
+                  v-if="data.spdxLicense?.licenseId || data.spdxSuggestion?.licenseId"
+                  class="spdx-suggestion"
+                  @mouseenter="onLicenseHover($event, data.spdxLicense?.licenseId || data.spdxSuggestion?.licenseId)"
+                  @mouseleave="onLicenseLeave"
+                >
+                  <span class="suggested-license">
+                    {{ data.spdxLicense?.licenseId || data.spdxSuggestion?.licenseId }}
+                  </span>
+                  <span class="spdx-badge" :class="data.spdxValidated ? 'spdx-valid' : 'spdx-invalid'">
+                    {{ data.spdxValidated ? '✓ Valid' : '⚠ Invalid' }}
+                  </span>
+                </div>
+                <span v-else class="no-suggestion">-</span>
+              </template>
+            </Column>
           </DataTable>
         </div>
       </template>
     </template>
+
+    <LicenseDetailPopup
+      :visible="showLicensePopup"
+      :license="selectedLicense"
+      :loading="loadingLicense"
+      :error="licenseError"
+      @mouseenter="onPopupEnter"
+      @mouseleave="onPopupLeave"
+      @close="onPopupLeave"
+    />
   </div>
 </template>
 
@@ -762,5 +993,74 @@ onMounted(fetchData)
   text-align: center;
   padding: 4rem;
   color: #64748b;
+}
+
+/* Curation Section */
+.curation-section {
+  background: white;
+  border-radius: 1rem;
+  padding: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  margin-bottom: 1.5rem;
+}
+
+.curation-section .section-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.curation-section .section-header h2 i {
+  color: #10b981;
+}
+
+.curation-status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.curation-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.curation-stats {
+  display: flex;
+  gap: 1.5rem;
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+.curation-stats .stat-item {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.curation-stats .stat-item.accepted {
+  color: #10b981;
+}
+
+.curation-stats .stat-item.rejected {
+  color: #ef4444;
+}
+
+.curation-stats .stat-item.modified {
+  color: #8b5cf6;
+}
+
+.no-curation {
+  margin-top: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.no-curation p {
+  color: #64748b;
+  margin: 0;
 }
 </style>

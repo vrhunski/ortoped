@@ -20,6 +20,7 @@ class NotFoundException(message: String) : Exception(message)
 class BadRequestException(message: String) : Exception(message)
 class UnauthorizedException(message: String) : Exception(message)
 class ConflictException(message: String) : Exception(message)
+class InternalException(message: String) : Exception(message)
 
 fun Application.configureStatusPages() {
     install(StatusPages) {
@@ -52,6 +53,14 @@ fun Application.configureStatusPages() {
             call.respond(
                 HttpStatusCode.Conflict,
                 ErrorResponse("conflict", cause.message ?: "Conflict", 409)
+            )
+        }
+
+        exception<InternalException> { call, cause ->
+            logger.error { "Internal error: ${cause.message}" }
+            call.respond(
+                HttpStatusCode.InternalServerError,
+                ErrorResponse("internal_error", cause.message ?: "Internal server error", 500)
             )
         }
 

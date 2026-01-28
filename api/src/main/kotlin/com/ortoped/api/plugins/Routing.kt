@@ -12,7 +12,11 @@ fun Application.configureRouting(
     scanService: ScanService,
     policyService: PolicyService,
     authService: AuthService,
-    scanRepository: ScanRepository
+    scanRepository: ScanRepository,
+    spdxService: SpdxService,
+    curationService: CurationService,
+    templateService: TemplateService,
+    reportService: ReportService
 ) {
     routing {
         // API routes
@@ -22,6 +26,10 @@ fun Application.configureRouting(
             scanRoutes(scanService)
             policyRoutes(policyService, scanRepository)
             authRoutes(authService)
+            licenseRoutes(spdxService)
+            curationRoutes(curationService)
+            templateRoutes(templateService)
+            reportRoutes(reportService)
         }
 
         // Serve Vue.js static files (dashboard)

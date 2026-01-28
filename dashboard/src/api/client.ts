@@ -112,6 +112,7 @@ export interface ScanSummary {
   resolvedLicenses: number
   unresolvedLicenses: number
   aiResolvedLicenses: number
+  spdxResolvedLicenses: number
   startedAt: string | null
   completedAt: string | null
 }
@@ -126,6 +127,8 @@ export interface Dependency {
   scope: string
   isResolved: boolean
   aiSuggestion: AiSuggestion | null
+  spdxValidated: boolean
+  spdxSuggestion: SpdxLicenseInfo | null
 }
 
 export interface AiSuggestion {
@@ -151,6 +154,164 @@ export interface ApiKey {
   apiKey: string | null
   createdAt: string
 }
+
+// Curation Types
+export interface CurationSession {
+  id: string
+  scanId: string
+  status: string
+  statistics: {
+    total: number
+    pending: number
+    accepted: number
+    rejected: number
+    modified: number
+  }
+  approval: {
+    approvedBy: string
+    approvedAt: string
+    comment?: string
+  } | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PriorityInfo {
+  level: string
+  score: number
+  factors: PriorityFactor[]
+}
+
+export interface PriorityFactor {
+  type: string
+  description: string
+  weight: number
+}
+
+export interface CurationItem {
+  id: string
+  dependencyId: string
+  dependencyName: string
+  dependencyVersion: string
+  scope: string | null
+  declaredLicenses: string[]
+  detectedLicenses: string[]
+  originalConcludedLicense: string | null
+  aiSuggestion: AiSuggestion | null
+  status: string
+  curatedLicense: string | null
+  curatorComment: string | null
+  curatorId: string | null
+  curatedAt: string | null
+  priority: PriorityInfo | null
+  spdxValidated: boolean
+  spdxLicense: SpdxLicenseInfo | null
+}
+
+export interface CurationDecision {
+  action: 'ACCEPT' | 'REJECT' | 'MODIFY'
+  curatedLicense?: string
+  comment?: string
+  curatorId?: string
+}
+
+export interface CurationFilter {
+  status?: string
+  priority?: string
+  confidence?: string
+  licenseCategory?: string
+  search?: string
+  sortBy?: string
+  sortDirection?: 'asc' | 'desc'
+  page?: number
+  pageSize?: number
+}
+
+export interface CurationTemplate {
+  id: string
+  name: string
+  description: string | null
+  conditions: TemplateCondition[]
+  actions: TemplateAction[]
+  isActive: boolean
+  usageCount: number
+  createdAt: string
+}
+
+export interface TemplateCondition {
+  field: string
+  operator: string
+  value: string
+}
+
+export interface TemplateAction {
+  type: string
+  value: string
+}
+
+export interface TemplatePreviewResult {
+  matchingItems: number
+  affectedItems: CurationItem[]
+}
+
+// Report Types
+export interface ReportSummary {
+  scanId: string
+  projectName: string
+  scanStatus: string
+  scanDate: string
+  totalDependencies: number
+  resolvedLicenses: number
+  unresolvedLicenses: number
+  aiResolvedLicenses: number
+  hasPolicyEvaluation: boolean
+  policyPassed: boolean | null
+  hasCuration: boolean
+  curationStatus: string | null
+  curationApproved: boolean
+}
+
+// SPDX License Types
+export interface SpdxLicenseInfo {
+  licenseId: string
+  name: string
+  isOsiApproved: boolean
+  isFsfLibre: boolean
+  isDeprecated: boolean
+  seeAlso: string[]
+}
+
+export interface SpdxLicenseDetailResponse {
+  licenseId: string
+  name: string
+  isOsiApproved: boolean
+  isFsfLibre: boolean
+  isDeprecated: boolean
+  seeAlso: string[]
+  licenseText?: string
+  standardHeader?: string
+  category: string
+}
+
+export interface SpdxLicenseSearchResponse {
+  licenses: SpdxLicenseInfo[]
+  total: number
+}
+
+export interface BulkValidationResponse {
+  results: BulkValidationItem[]
+  validCount: number
+  invalidCount: number
+}
+
+export interface BulkValidationItem {
+  input: string
+  isValid: boolean
+  normalizedId?: string
+  message?: string
+}
+
+export type LicenseValidationResponse = BulkValidationResponse
 
 // API Functions
 export const api = {
@@ -228,7 +389,105 @@ export const api = {
     apiClient.post<ApiKey>('/auth/api-keys', { name }),
 
   deleteApiKey: (id: string) =>
-    apiClient.delete(`/auth/api-keys/${id}`)
+    apiClient.delete(`/auth/api-keys/${id}`),
+
+  // Curation
+  startCurationSession: (scanId: string) =>
+    apiClient.post<CurationSession>(`/scans/${scanId}/curation/start`, {}),
+
+  getCurationSessionByScan: (scanId: string) =>
+    apiClient.get<CurationSession>(`/scans/${scanId}/curation`),
+
+  getCurationSession: (sessionId: string) =>
+    apiClient.get<CurationSession>(`/scans/${sessionId}/curation`),
+
+  listCurationItems: (scanId: string, filter?: CurationFilter) =>
+    apiClient.get<{ items: CurationItem[]; total: number; page: number; pageSize: number }>(
+      `/scans/${scanId}/curation/items`,
+      { params: filter }
+    ),
+
+  getCurationItem: (scanId: string, dependencyId: string) =>
+    apiClient.get<CurationItem>(`/scans/${scanId}/curation/items/${dependencyId}`),
+
+  submitCurationDecision: (scanId: string, dependencyId: string, decision: CurationDecision) =>
+    apiClient.put<CurationItem>(`/scans/${scanId}/curation/items/${dependencyId}`, decision),
+
+  bulkCurationDecision: (scanId: string, dependencyIds: string[], decision: CurationDecision) =>
+    apiClient.post<{ updated: number; results: CurationItem[] }>(`/scans/${scanId}/curation/bulk`, {
+      decisions: dependencyIds.map(id => ({
+        dependencyId: id,
+        action: decision.action,
+        curatedLicense: decision.curatedLicense,
+        comment: decision.comment
+      }))
+    }),
+
+  approveCurationSession: (scanId: string, _approvedBy: string, comment?: string) =>
+    apiClient.post<CurationSession>(`/scans/${scanId}/curation/approve`, {
+      comment
+    }),
+
+  // Curation Templates
+  listTemplates: () =>
+    apiClient.get<{ templates: CurationTemplate[]; total: number }>('/curation/templates'),
+
+  getTemplate: (templateId: string) =>
+    apiClient.get<CurationTemplate>(`/curation/templates/${templateId}`),
+
+  createTemplate: (template: Omit<CurationTemplate, 'id' | 'usageCount' | 'createdAt'>) =>
+    apiClient.post<CurationTemplate>('/curation/templates', template),
+
+  updateTemplate: (templateId: string, template: Partial<CurationTemplate>) =>
+    apiClient.put<CurationTemplate>(`/curation/templates/${templateId}`, template),
+
+  deleteTemplate: (templateId: string) =>
+    apiClient.delete(`/curation/templates/${templateId}`),
+
+  previewTemplate: (sessionId: string, templateId: string) =>
+    apiClient.post<TemplatePreviewResult>(`/curation/sessions/${sessionId}/preview-template`, { templateId }),
+
+  applyTemplate: (sessionId: string, templateId: string) =>
+    apiClient.post<{ applied: number }>(`/curation/sessions/${sessionId}/apply-template`, { templateId }),
+
+  // Reports
+  getReportSummary: (scanId: string) =>
+    apiClient.get<ReportSummary>(`/scans/${scanId}/reports/summary`),
+
+  generateReport: (scanId: string, options?: {
+    format?: string
+    includePolicy?: boolean
+    includeCuration?: boolean
+    includeAuditTrail?: boolean
+    includeDependencyDetails?: boolean
+  }) =>
+    apiClient.post(`/scans/${scanId}/reports/generate`, options || {}),
+
+  downloadReport: (scanId: string, format: 'json' | 'html' = 'json', includeDetails = false) =>
+    apiClient.get(`/scans/${scanId}/reports/download`, {
+      params: { format, includeDetails },
+      responseType: 'blob'
+    }),
+
+  downloadOrtExport: (scanId: string) =>
+    apiClient.get<{ scanId: string; filename: string; content: string; format: string; generatedAt: string }>(
+      `/scans/${scanId}/reports/ort`
+    ),
+
+  // SPDX License APIs
+  searchSpdxLicenses: (query: string, options?: { osiOnly?: boolean; limit?: number }) =>
+    apiClient.get<SpdxLicenseSearchResponse>('/licenses/spdx/search', {
+      params: { q: query, ...options }
+    }),
+
+  getSpdxLicense: (id: string) =>
+    apiClient.get<SpdxLicenseDetailResponse>(`/licenses/spdx/${id}`),
+
+  getCommonLicenses: () =>
+    apiClient.get<{ licenses: SpdxLicenseInfo[] }>('/licenses/spdx/common'),
+
+  validateLicenses: (licenseIds: string[]) =>
+    apiClient.post<LicenseValidationResponse>('/licenses/validate', { licenseIds })
 }
 
 export default apiClient

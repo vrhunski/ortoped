@@ -114,6 +114,27 @@ class ScanService(
                             spdxId = ai.spdxId,
                             alternatives = ai.alternatives
                         )
+                    },
+                    spdxValidated = dep.spdxValidated,
+                    spdxLicense = dep.spdxLicense?.let { license ->
+                        SpdxLicenseInfo(
+                            licenseId = license.licenseId,
+                            name = license.name,
+                            isOsiApproved = license.isOsiApproved,
+                            isFsfLibre = license.isFsfLibre,
+                            isDeprecated = license.isDeprecated,
+                            seeAlso = license.seeAlso
+                        )
+                    },
+                    spdxSuggestion = dep.spdxSuggestion?.let { license ->
+                        SpdxLicenseInfo(
+                            licenseId = license.licenseId,
+                            name = license.name,
+                            isOsiApproved = license.isOsiApproved,
+                            isFsfLibre = license.isFsfLibre,
+                            isDeprecated = license.isDeprecated,
+                            seeAlso = license.seeAlso
+                        )
                     }
                 )
             }
@@ -131,10 +152,13 @@ class ScanService(
         val project = projectRepository.findById(projectUuid)
             ?: throw NotFoundException("Project not found: ${request.projectId}")
 
+        val effectiveEnableSpdx = request.enableSpdx || request.demoMode
+
         // Create scan record
         val scan = scanRepository.create(
             projectId = projectUuid,
-            enableAi = request.enableAi
+            enableAi = request.enableAi,
+            enableSpdx = effectiveEnableSpdx
         )
 
         // Start async scan job
@@ -155,6 +179,8 @@ class ScanService(
         logger.info { "Starting scan job: $scanId" }
 
         try {
+            val effectiveEnableSpdx = request.enableSpdx || request.demoMode
+
             // Update status to scanning
             scanRepository.updateStatus(
                 id = scanId,
@@ -204,6 +230,7 @@ class ScanService(
                 val scanResult = orchestrator.scanWithAiEnhancement(
                     projectDir = projectDir,
                     enableAiResolution = request.enableAi,
+                    enableSpdx = effectiveEnableSpdx,
                     enableSourceScan = request.enableSourceScan,
                     parallelAiCalls = request.parallelAiCalls,
                     demoMode = request.demoMode
@@ -216,7 +243,8 @@ class ScanService(
                         "totalDependencies" to scanResult.summary.totalDependencies,
                         "resolvedLicenses" to scanResult.summary.resolvedLicenses,
                         "unresolvedLicenses" to scanResult.summary.unresolvedLicenses,
-                        "aiResolvedLicenses" to scanResult.summary.aiResolvedLicenses
+                        "aiResolvedLicenses" to scanResult.summary.aiResolvedLicenses,
+                        "spdxResolvedLicenses" to scanResult.summary.spdxResolvedLicenses
                     )
                 )
 
@@ -302,6 +330,7 @@ class ScanService(
             resolvedLicenses = summaryData?.get("resolvedLicenses") ?: 0,
             unresolvedLicenses = summaryData?.get("unresolvedLicenses") ?: 0,
             aiResolvedLicenses = summaryData?.get("aiResolvedLicenses") ?: 0,
+            spdxResolvedLicenses = summaryData?.get("spdxResolvedLicenses") ?: 0,
             startedAt = startedAt,
             completedAt = completedAt
         )

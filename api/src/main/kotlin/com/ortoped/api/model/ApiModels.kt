@@ -40,6 +40,7 @@ data class ProjectListResponse(
 data class TriggerScanRequest(
     val projectId: String,
     val enableAi: Boolean = true,
+    val enableSpdx: Boolean = false,
     val enableSourceScan: Boolean = false,
     val parallelAiCalls: Boolean = true,
     val demoMode: Boolean = false,
@@ -69,6 +70,7 @@ data class ScanSummaryResponse(
     val resolvedLicenses: Int,
     val unresolvedLicenses: Int,
     val aiResolvedLicenses: Int,
+    val spdxResolvedLicenses: Int,
     val startedAt: String?,
     val completedAt: String?
 )
@@ -91,7 +93,10 @@ data class DependencyResponse(
     val concludedLicense: String?,
     val scope: String,
     val isResolved: Boolean,
-    val aiSuggestion: AiSuggestionResponse?
+    val aiSuggestion: AiSuggestionResponse?,
+    val spdxValidated: Boolean,
+    val spdxLicense: SpdxLicenseInfo?,
+    val spdxSuggestion: SpdxLicenseInfo?
 )
 
 @Serializable

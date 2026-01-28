@@ -9,7 +9,7 @@ fun Application.configureRateLimit() {
     install(RateLimit) {
         // Global rate limit
         global {
-            rateLimiter(limit = 100, refillPeriod = 1.minutes)
+            rateLimiter(limit = 1000, refillPeriod = 1.minutes)
         }
 
         // Stricter limit for scan endpoints (resource intensive)

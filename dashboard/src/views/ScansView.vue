@@ -59,6 +59,7 @@ onMounted(fetchScans)
             <th>Resolved</th>
             <th>Unresolved</th>
             <th>AI Resolved</th>
+            <th>SPDX Resolved</th>
             <th>Completed</th>
             <th></th>
           </tr>
@@ -74,6 +75,7 @@ onMounted(fetchScans)
             <td>{{ scan.resolvedLicenses }}</td>
             <td>{{ scan.unresolvedLicenses }}</td>
             <td>{{ scan.aiResolvedLicenses }}</td>
+            <td>{{ scan.spdxResolvedLicenses || 0 }}</td>
             <td>{{ scan.completedAt ? new Date(scan.completedAt).toLocaleString() : '-' }}</td>
             <td>
               <RouterLink :to="`/scans/${scan.id}`" class="btn btn-small">

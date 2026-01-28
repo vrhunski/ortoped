@@ -43,6 +43,21 @@ const router = createRouter({
       path: '/settings',
       name: 'settings',
       component: () => import('@/views/SettingsView.vue')
+    },
+    {
+      path: '/curations',
+      name: 'curations',
+      component: () => import('@/views/CurationsView.vue')
+    },
+    {
+      path: '/curations/:id',
+      name: 'curation-session',
+      component: () => import('@/views/CurationSessionView.vue')
+    },
+    {
+      path: '/curation-templates',
+      name: 'curation-templates',
+      component: () => import('@/views/CurationTemplatesView.vue')
     }
   ]
 })

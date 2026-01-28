@@ -11,6 +11,7 @@ data class ScanResult(
     val summary: ScanSummary,
     val unresolvedLicenses: List<UnresolvedLicense>,
     val aiEnhanced: Boolean = false,
+    val spdxEnhanced: Boolean = false,
     // Scanner integration fields
     val sourceCodeScanned: Boolean = false,
     val scannerType: String? = null,
@@ -27,7 +28,10 @@ data class Dependency(
     val concludedLicense: String?,
     val scope: String,
     val isResolved: Boolean,
-    val aiSuggestion: LicenseSuggestion? = null
+    val aiSuggestion: LicenseSuggestion? = null,
+    val spdxValidated: Boolean = false,
+    val spdxLicense: SpdxLicense? = null,
+    val spdxSuggestion: SpdxLicense? = null
 )
 
 @Serializable
@@ -57,6 +61,7 @@ data class ScanSummary(
     val resolvedLicenses: Int,
     val unresolvedLicenses: Int,
     val aiResolvedLicenses: Int = 0,
+    val spdxResolvedLicenses: Int = 0,
     val licenseDistribution: Map<String, Int>,
     // Scanner integration field
     val scannerResolvedLicenses: Int = 0

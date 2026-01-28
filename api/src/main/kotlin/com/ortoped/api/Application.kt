@@ -36,12 +36,35 @@ fun Application.module() {
     val scanRepository = ScanRepository()
     val policyRepository = PolicyRepository()
     val apiKeyRepository = ApiKeyRepository()
+    val curationRepository = CurationRepository()
+    val curationSessionRepository = CurationSessionRepository()
+    val curatedScanRepository = CuratedScanRepository()
+    val curationTemplateRepository = CurationTemplateRepository()
 
     // Initialize services
     val projectService = ProjectService(projectRepository)
     val scanService = ScanService(scanRepository, projectRepository)
     val policyService = PolicyService(policyRepository)
     val authService = AuthService(apiKeyRepository)
+    val spdxService = SpdxService()
+    val curationService = CurationService(
+        curationRepository = curationRepository,
+        curationSessionRepository = curationSessionRepository,
+        curatedScanRepository = curatedScanRepository,
+        scanRepository = scanRepository
+    )
+    val templateService = TemplateService(
+        templateRepository = curationTemplateRepository,
+        curationRepository = curationRepository,
+        curationSessionRepository = curationSessionRepository
+    )
+    val reportService = ReportService(
+        scanRepository = scanRepository,
+        projectRepository = projectRepository,
+        policyRepository = policyRepository,
+        curationRepository = curationRepository,
+        curationSessionRepository = curationSessionRepository
+    )
 
     // Configure routes
     configureRouting(
@@ -49,7 +72,11 @@ fun Application.module() {
         scanService = scanService,
         policyService = policyService,
         authService = authService,
-        scanRepository = scanRepository
+        scanRepository = scanRepository,
+        spdxService = spdxService,
+        curationService = curationService,
+        templateService = templateService,
+        reportService = reportService
     )
 
     logger.info { "OrtoPed API server started successfully" }

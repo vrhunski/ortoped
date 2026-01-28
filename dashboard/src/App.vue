@@ -38,6 +38,18 @@ import Toast from 'primevue/toast'
           </RouterLink>
         </li>
         <li>
+          <RouterLink to="/curations" class="nav-link">
+            <i class="pi pi-check-square"></i>
+            <span>Curation</span>
+          </RouterLink>
+        </li>
+        <li>
+          <RouterLink to="/curation-templates" class="nav-link">
+            <i class="pi pi-copy"></i>
+            <span>Templates</span>
+          </RouterLink>
+        </li>
+        <li>
           <RouterLink to="/settings" class="nav-link">
             <i class="pi pi-cog"></i>
             <span>Settings</span>

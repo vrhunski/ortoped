@@ -15,6 +15,7 @@ const scanning = ref(false)
 // Scan configuration with smart defaults
 const scanConfig = ref({
   enableAi: true,
+  enableSpdx: false,
   enableSourceScan: false,
   parallelAiCalls: true
 })
@@ -242,6 +243,14 @@ onUnmounted(() => {
 
           <div class="config-row">
             <div class="config-info">
+              <span class="config-label">Enable SPDX Validation</span>
+              <span class="config-description">Validate licenses against SPDX database</span>
+            </div>
+            <InputSwitch v-model="scanConfig.enableSpdx" />
+          </div>
+
+          <div class="config-row">
+            <div class="config-info">
               <span class="config-label">Source Code Scan</span>
               <span class="config-description">Deep scan with ScanCode (slower)</span>
             </div>
@@ -299,6 +308,7 @@ onUnmounted(() => {
               <th>Resolved</th>
               <th>Unresolved</th>
               <th>AI Resolved</th>
+              <th>SPDX Resolved</th>
               <th>Duration</th>
               <th>Completed</th>
               <th></th>
@@ -316,6 +326,7 @@ onUnmounted(() => {
               <td>{{ scan.resolvedLicenses }}</td>
               <td>{{ scan.unresolvedLicenses }}</td>
               <td>{{ scan.aiResolvedLicenses }}</td>
+              <td>{{ scan.spdxResolvedLicenses || 0 }}</td>
               <td class="duration-cell">{{ formatDuration(scan.startedAt, scan.completedAt) }}</td>
               <td>{{ scan.completedAt ? new Date(scan.completedAt).toLocaleString() : '-' }}</td>
               <td>

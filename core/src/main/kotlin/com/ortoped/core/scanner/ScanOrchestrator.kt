@@ -5,6 +5,7 @@ import com.ortoped.core.model.Dependency
 import com.ortoped.core.model.ScanResult
 import com.ortoped.core.model.ScanSummary
 import com.ortoped.core.model.UnresolvedLicense
+import com.ortoped.core.spdx.SpdxLicenseClient
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -16,12 +17,14 @@ private val logger = KotlinLogging.logger {}
 class ScanOrchestrator(
     private val scanner: SimpleScannerWrapper = SimpleScannerWrapper(),
     private val licenseResolver: LicenseResolver = LicenseResolver(),
+    private val spdxClient: SpdxLicenseClient = SpdxLicenseClient(),
     private val scannerConfig: ScannerConfig = ScannerConfig()
 ) {
 
     suspend fun scanWithAiEnhancement(
         projectDir: File,
         enableAiResolution: Boolean = true,
+        enableSpdx: Boolean = false,
         enableSourceScan: Boolean = false,
         parallelAiCalls: Boolean = true,
         demoMode: Boolean = false
@@ -29,6 +32,7 @@ class ScanOrchestrator(
         logger.info { "Starting orchestrated scan for: ${projectDir.absolutePath}" }
         logger.info { "Source code scanning: $enableSourceScan" }
         logger.info { "AI enhancement: $enableAiResolution" }
+        logger.info { "SPDX enhancement: $enableSpdx" }
 
         // Step 1/4: Run analyzer scan
         logger.info { "Step 1/4: Running analyzer..." }
@@ -56,28 +60,38 @@ class ScanOrchestrator(
                 logger.info { "  - ${unresolved.dependencyName} (${unresolved.dependencyId}): ${unresolved.reason}" }
             }
         }
+/*
 
         if (!enableAiResolution) {
             logger.info { "AI resolution is disabled. Returning scan result without AI enhancement." }
             return scanResult
         }
+*/
 
         if (scanResult.unresolvedLicenses.isEmpty()) {
             logger.info { "No unresolved licenses to enhance with AI." }
             return scanResult
         }
 
-        logger.info { "Step 3/4: AI-enhancing ${scanResult.unresolvedLicenses.size} unresolved licenses..." }
-        val enhancedDependencies = enhanceWithAi(
-            scanResult.dependencies,
-            scanResult.unresolvedLicenses,
-            parallelAiCalls
-        )
+        logger.info { "Step 3/4: ${if (enableAiResolution) "AI-enhancing ${scanResult.unresolvedLicenses.size} unresolved licenses..." else "Skipping AI enhancement"}" }
+        val enhancedDependencies =  if (enableAiResolution) {
+            enhanceWithAi(
+                scanResult.dependencies,
+                scanResult.unresolvedLicenses,
+                parallelAiCalls
+            )
+        } else{
+            logger.info { "AI resolution is disabled. Skipping AI enhancement." }
+            scanResult.dependencies
+        }
 
         // Calculate new summary
-        val aiResolvedCount = enhancedDependencies.count {
-            !it.isResolved && it.aiSuggestion != null && it.aiSuggestion.confidence == "HIGH"
-        }
+        val aiResolvedCount = if (enableAiResolution) {
+            enhancedDependencies.count {
+                !it.isResolved && it.aiSuggestion != null && it.aiSuggestion.confidence == "HIGH"
+            }
+        } else 0
+
 
         val updatedSummary = scanResult.summary.copy(
             aiResolvedLicenses = aiResolvedCount
@@ -85,10 +99,30 @@ class ScanOrchestrator(
 
         logger.info { "AI enhancement complete. Resolved: $aiResolvedCount licenses" }
 
+        // Step 4: SPDX enhancement for license validation and suggestions
+        val spdxEnhancedDependencies = if (enableSpdx) {
+            logger.info { "Step 4/4: SPDX-enhancing dependencies..." }
+            enhanceWithSpdx(enhancedDependencies)
+        } else {
+            logger.info { "SPDX enhancement is disabled. Skipping." }
+            enhancedDependencies
+        }
+
+        val spdxResolvedCount = if (enableSpdx) {
+            spdxEnhancedDependencies.count { it.spdxSuggestion != null }
+        } else 0
+
+        val finalSummary = updatedSummary.copy(
+            spdxResolvedLicenses = spdxResolvedCount
+        )
+
+        logger.info { "SPDX enhancement complete. Validated: $spdxResolvedCount licenses" }
+
         return scanResult.copy(
-            dependencies = enhancedDependencies,
-            summary = updatedSummary,
-            aiEnhanced = true
+            dependencies = spdxEnhancedDependencies,
+            summary = finalSummary,
+            aiEnhanced = enableAiResolution,
+            spdxEnhanced = enableSpdx
         )
     }
 
@@ -138,6 +172,56 @@ class ScanOrchestrator(
                 } catch (e: Exception) {
                     logger.error(e) { "Failed to resolve license for ${unresolved.dependencyName}" }
                 }
+            }
+        }
+
+        dependencyMap.values.toList()
+    }
+
+    private suspend fun enhanceWithSpdx(dependencies: List<Dependency>): List<Dependency> = coroutineScope {
+        val dependencyMap = dependencies.associateBy { it.id }.toMutableMap()
+
+        dependencies.forEach { dependency ->
+            try {
+                // Validate existing license against SPDX
+                val declaredLicense = dependency.declaredLicenses.firstOrNull()
+                if (declaredLicense != null) {
+                    val spdxValidation = spdxClient.validateLicenseId(declaredLicense)
+                    if (spdxValidation.isValid && spdxValidation.licenseId != null) {
+                        val license = spdxClient.getLicenseById(spdxValidation.licenseId)
+                        if (license != null) {
+                            logger.debug { "SPDX validation for ${dependency.name}: $declaredLicense ✓" }
+                            dependencyMap[dependency.id] = dependency.copy(
+                                spdxValidated = true,
+                                spdxLicense = license
+                            )
+                        }
+                    } else {
+                        logger.debug { "SPDX validation for ${dependency.name}: $declaredLicense ✗" }
+                        // Try to find similar SPDX license as suggestion
+                        val similarLicenses = spdxClient.findSimilarLicenses(declaredLicense)
+                        if (similarLicenses.isNotEmpty()) {
+                            val suggestion = similarLicenses.first()
+                            logger.info { "SPDX suggestion for ${dependency.name}: ${suggestion.licenseId}" }
+                            dependencyMap[dependency.id] = dependency.copy(
+                                spdxValidated = false,
+                                spdxSuggestion = suggestion
+                            )
+                        }
+                    }
+                } else {
+                    // No declared license, try to find SPDX match for package name
+                    val possibleLicenses = spdxClient.searchLicenses(dependency.name, 5)
+                    if (possibleLicenses.isNotEmpty()) {
+                        val suggestion = possibleLicenses.first()
+                        logger.info { "SPDX suggestion for ${dependency.name} (no declared license): ${suggestion.licenseId}" }
+                        dependencyMap[dependency.id] = dependency.copy(
+                            spdxSuggestion = suggestion
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                logger.error(e) { "Failed to enhance dependency ${dependency.name} with SPDX" }
             }
         }
 

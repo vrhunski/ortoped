@@ -56,7 +56,8 @@ class ScanRepository {
 
     fun create(
         projectId: UUID?,
-        enableAi: Boolean = true
+        enableAi: Boolean = true,
+        enableSpdx: Boolean = false
     ): ScanEntity = transaction {
         val id = UUID.randomUUID()
         val now = Clock.System.now()
@@ -66,6 +67,7 @@ class ScanRepository {
             it[Scans.projectId] = projectId
             it[status] = ScanStatus.PENDING.value
             it[Scans.enableAi] = enableAi
+            it[Scans.enableSpdx] = enableSpdx
             it[createdAt] = now
         }
 
