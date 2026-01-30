@@ -65,6 +65,7 @@ fun Application.module() {
         curationRepository = curationRepository,
         curationSessionRepository = curationSessionRepository
     )
+    val licenseGraphService = LicenseGraphService()
 
     // Configure routes
     configureRouting(
@@ -76,7 +77,8 @@ fun Application.module() {
         spdxService = spdxService,
         curationService = curationService,
         templateService = templateService,
-        reportService = reportService
+        reportService = reportService,
+        licenseGraphService = licenseGraphService
     )
 
     logger.info { "OrtoPed API server started successfully" }

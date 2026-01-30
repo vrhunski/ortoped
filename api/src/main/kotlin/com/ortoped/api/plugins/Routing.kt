@@ -16,7 +16,8 @@ fun Application.configureRouting(
     spdxService: SpdxService,
     curationService: CurationService,
     templateService: TemplateService,
-    reportService: ReportService
+    reportService: ReportService,
+    licenseGraphService: LicenseGraphService
 ) {
     routing {
         // API routes
@@ -30,6 +31,7 @@ fun Application.configureRouting(
             curationRoutes(curationService)
             templateRoutes(templateService)
             reportRoutes(reportService)
+            licenseGraphRoutes(licenseGraphService)
         }
 
         // Serve Vue.js static files (dashboard)
