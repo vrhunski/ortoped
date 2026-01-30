@@ -144,6 +144,7 @@ async function triggerScan(demoMode = false) {
       await api.triggerScan({
         projectId: project.value.id,
         enableAi: scanConfig.value.enableAi,
+        enableSpdx: scanConfig.value.enableSpdx,
         enableSourceScan: scanConfig.value.enableSourceScan,
         parallelAiCalls: scanConfig.value.parallelAiCalls,
         demoMode: false

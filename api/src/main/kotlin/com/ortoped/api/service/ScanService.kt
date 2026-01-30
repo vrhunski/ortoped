@@ -11,6 +11,7 @@ import com.ortoped.core.scanner.ScanOrchestrator
 import com.ortoped.core.scanner.ScannerConfig
 import com.ortoped.core.scanner.SimpleScannerWrapper
 import com.ortoped.core.scanner.SourceCodeScanner
+import com.ortoped.core.spdx.SpdxLicenseClient
 import com.ortoped.core.vcs.RemoteRepositoryHandler
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.*
@@ -31,6 +32,14 @@ class ScanService(
         ignoreUnknownKeys = true
         encodeDefaults = true
         prettyPrint = false
+    }
+
+    private fun getDefaultDisabledPackageManagers(): List<String> {
+        return System.getenv("DISABLED_PACKAGE_MANAGERS")
+            ?.split(",")
+            ?.map { it.trim().lowercase() }
+            ?.filter { it.isNotBlank() }
+            ?: listOf("bower", "npm", "yarn") // Default fallback - disable problematic package managers
     }
 
     // In-memory job tracking for active scans
@@ -223,8 +232,13 @@ class ScanService(
                 val scanner = SimpleScannerWrapper(sourceCodeScanner)
                 val orchestrator = ScanOrchestrator(
                     scanner = scanner,
-                    scannerConfig = scannerConfig
+                    scannerConfig = scannerConfig,
+                    spdxClient = SpdxLicenseClient()
                 )
+
+                // Merge request disabled package managers with defaults
+                val defaultDisabled = getDefaultDisabledPackageManagers()
+                val allDisabledPackageManagers = (request.disabledPackageManagers + defaultDisabled).distinct()
 
                 // Run scan
                 val scanResult = orchestrator.scanWithAiEnhancement(
@@ -233,7 +247,8 @@ class ScanService(
                     enableSpdx = effectiveEnableSpdx,
                     enableSourceScan = request.enableSourceScan,
                     parallelAiCalls = request.parallelAiCalls,
-                    demoMode = request.demoMode
+                    demoMode = request.demoMode,
+                    disabledPackageManagers = allDisabledPackageManagers
                 )
 
                 // Store result

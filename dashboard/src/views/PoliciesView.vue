@@ -30,35 +30,49 @@ const creating = ref(false)
 const defaultPolicyConfig: PolicyConfig = {
   version: '1.0',
   name: '',
-  description: '',
+  description: 'Default policy that flags unknown licenses',
+  categories: {
+    permissive: {
+      description: 'Permissive open source licenses',
+      licenses: ['MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'ISC', 'Unlicense', '0BSD', 'CC0-1.0']
+    },
+    copyleft: {
+      description: 'Strong copyleft licenses',
+      licenses: ['GPL-2.0-only', 'GPL-2.0-or-later', 'GPL-3.0-only', 'GPL-3.0-or-later', 'AGPL-3.0-only', 'AGPL-3.0-or-later']
+    },
+    'copyleft-limited': {
+      description: 'Weak copyleft licenses with limited scope',
+      licenses: ['LGPL-2.0-only', 'LGPL-2.1-only', 'LGPL-3.0-only', 'MPL-2.0', 'EPL-1.0', 'EPL-2.0']
+    },
+    unknown: {
+      description: 'Unknown or unresolved licenses',
+      licenses: ['NOASSERTION', 'Unknown']
+    }
+  },
   rules: [
     {
-      name: 'deny-copyleft',
-      description: 'Deny strong copyleft licenses',
+      id: 'no-unknown',
+      name: 'No Unknown Licenses',
+      description: 'All dependencies must have identified licenses',
       severity: 'ERROR',
+      enabled: true,
+      category: 'unknown',
       action: 'DENY',
-      enabled: true
-    },
-    {
-      name: 'warn-unknown',
-      description: 'Warn on unknown licenses',
-      severity: 'WARNING',
-      action: 'WARN',
-      enabled: true
+      scopes: [],
+      message: 'Dependency {{dependency}} has unresolved license - manual review required'
     }
   ],
-  allowedLicenses: ['MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'ISC'],
-  deniedLicenses: ['GPL-2.0-only', 'GPL-3.0-only', 'AGPL-3.0-only'],
-  licenseCategories: [
-    { name: 'permissive', licenses: ['MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause'] },
-    { name: 'copyleft', licenses: ['GPL-2.0-only', 'GPL-3.0-only', 'LGPL-2.1-only'] }
-  ],
-  exemptions: [],
   settings: {
-    failOnError: true,
-    failOnWarning: false,
-    acceptAiSuggestions: true,
-    minimumConfidence: 'MEDIUM'
+    aiSuggestions: {
+      acceptHighConfidence: true,
+      treatMediumAsWarning: true,
+      rejectLowConfidence: true
+    },
+    failOn: {
+      errors: true,
+      warnings: false
+    },
+    exemptions: []
   }
 }
 

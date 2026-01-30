@@ -40,35 +40,54 @@ export interface Project {
 
 // Policy Configuration Types
 export interface PolicyRule {
+  id: string
   name: string
-  description: string
+  description?: string
   severity: 'ERROR' | 'WARNING' | 'INFO'
-  action: 'DENY' | 'WARN' | 'ALLOW'
   enabled: boolean
-  parameters?: Record<string, unknown>
+  category?: string
+  allowlist?: string[]
+  denylist?: string[]
+  scopes: string[]
+  action: 'ALLOW' | 'DENY' | 'REVIEW'
+  message?: string
 }
 
-export interface LicenseCategory {
-  name: string
+export interface LicenseCategoryDefinition {
+  description?: string
   licenses: string[]
 }
 
+export interface AiSuggestionSettings {
+  acceptHighConfidence: boolean
+  treatMediumAsWarning: boolean
+  rejectLowConfidence: boolean
+}
+
+export interface FailOnSettings {
+  errors: boolean
+  warnings: boolean
+}
+
+export interface Exemption {
+  dependency: string
+  reason: string
+  approvedBy?: string
+  approvedDate?: string
+}
+
 export interface PolicySettings {
-  failOnError: boolean
-  failOnWarning: boolean
-  acceptAiSuggestions: boolean
-  minimumConfidence: string
+  aiSuggestions: AiSuggestionSettings
+  failOn: FailOnSettings
+  exemptions: Exemption[]
 }
 
 export interface PolicyConfig {
   version: string
   name: string
-  description: string
+  description?: string
+  categories: Record<string, LicenseCategoryDefinition>
   rules: PolicyRule[]
-  allowedLicenses: string[]
-  deniedLicenses: string[]
-  licenseCategories: LicenseCategory[]
-  exemptions: string[]
   settings: PolicySettings
 }
 
@@ -355,6 +374,7 @@ export const api = {
     enableSourceScan?: boolean
     parallelAiCalls?: boolean
     demoMode?: boolean
+    disabledPackageManagers?: string[]
   }) => apiClient.post<Scan>('/scans', data),
 
   generateSbom: (scanId: string, format = 'cyclonedx-json') =>

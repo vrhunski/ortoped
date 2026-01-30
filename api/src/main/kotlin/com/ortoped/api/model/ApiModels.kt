@@ -44,6 +44,7 @@ data class TriggerScanRequest(
     val enableSourceScan: Boolean = false,
     val parallelAiCalls: Boolean = true,
     val demoMode: Boolean = false,
+    val disabledPackageManagers: List<String> = emptyList(),
     val branch: String? = null,
     val tag: String? = null,
     val commit: String? = null

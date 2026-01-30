@@ -15,7 +15,9 @@ data class ScanResult(
     // Scanner integration fields
     val sourceCodeScanned: Boolean = false,
     val scannerType: String? = null,
-    val packagesScanned: Int = 0
+    val packagesScanned: Int = 0,
+    // Warnings and errors that occurred during scanning
+    val warnings: List<String> = emptyList()
 )
 
 @Serializable

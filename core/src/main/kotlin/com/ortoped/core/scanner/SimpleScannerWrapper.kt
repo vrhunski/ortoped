@@ -3,6 +3,10 @@ package com.ortoped.core.scanner
 import com.ortoped.core.demo.DemoDataProvider
 import com.ortoped.core.model.*
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.ossreviewtoolkit.analyzer.Analyzer
 import org.ossreviewtoolkit.analyzer.PackageManagerFactory
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
@@ -23,7 +27,8 @@ class SimpleScannerWrapper(
     suspend fun scanProject(
         projectDir: File,
         demoMode: Boolean = false,
-        enableSourceScan: Boolean = true
+        enableSourceScan: Boolean = true,
+        disabledPackageManagers: List<String> = emptyList()
     ): ScanResult {
         logger.info { "Starting scan for project: ${projectDir.absolutePath}" }
         logger.info { "Demo mode: $demoMode" }
@@ -34,7 +39,7 @@ class SimpleScannerWrapper(
             return DemoDataProvider.generateDemoScanResult()
         }
 
-        val (ortResult, baseResult) = performRealScan(projectDir)
+        val (ortResult, baseResult) = performRealScan(projectDir, disabledPackageManagers)
 
         // Enhance with source code scanner if enabled
         if (enableSourceScan) {
@@ -48,7 +53,7 @@ class SimpleScannerWrapper(
         return baseResult
     }
 
-    private fun performRealScan(projectDir: File): Pair<org.ossreviewtoolkit.model.OrtResult?, ScanResult> {
+    private fun performRealScan(projectDir: File, disabledPackageManagers: List<String> = emptyList()): Pair<org.ossreviewtoolkit.model.OrtResult?, ScanResult> {
         logger.info { "Starting real ORT scan..." }
 
         // Workaround for NPM cache permission issues
@@ -57,10 +62,11 @@ class SimpleScannerWrapper(
         // Ensure lock files exist for NPM projects
         ensureNpmLockFiles(projectDir)
 
-        // Step 1: Configure the analyzer with sensible defaults
+        // Step 1: Configure the analyzer with sensible defaults to tolerate missing references
         val analyzerConfig = AnalyzerConfiguration(
-            allowDynamicVersions = true,  // Handle version ranges
-            skipExcluded = false,          // Include all dependencies
+            allowDynamicVersions = true,  // Handle version ranges - tolerate unresolved versions
+            skipExcluded = true,          // Skip excluded dependencies - tolerate missing references
+            disabledPackageManagers = disabledPackageManagers,
             packageManagers = mapOf(
                 "Npm" to PackageManagerConfiguration() // Explicitly configure Npm with default/empty settings
             )
@@ -69,12 +75,33 @@ class SimpleScannerWrapper(
         val analyzer = Analyzer(analyzerConfig)
 
         // Step 2: Find all managed files (package manager manifests)
-        val packageManagers = ServiceLoader.load(PackageManagerFactory::class.java).toList()
-        logger.info { "Discovered ${packageManagers.size} package managers." }
+        val allPackageManagers = ServiceLoader.load(PackageManagerFactory::class.java).toList()
+        logger.info { "Discovered ${allPackageManagers.size} package managers." }
+        
+        // Filter out disabled package managers BEFORE passing to findManagedFiles
+        val disabledLowercase = disabledPackageManagers.map { it.lowercase() }.toSet()
+        val enabledPackageManagers = if (disabledLowercase.isNotEmpty()) {
+            allPackageManagers.filter { factory ->
+                val factoryName = factory::class.java.simpleName.lowercase()
+                    .removeSuffix("factory")
+                    .removeSuffix("packagemanager")
+                val isDisabled = disabledLowercase.any { disabled ->
+                    factoryName.contains(disabled) || disabled.contains(factoryName)
+                }
+                if (isDisabled) {
+                    logger.info { "Disabling package manager: ${factory::class.java.simpleName}" }
+                }
+                !isDisabled
+            }
+        } else {
+            allPackageManagers
+        }
+        
+        logger.info { "Using ${enabledPackageManagers.size} package managers (${allPackageManagers.size - enabledPackageManagers.size} disabled)" }
 
         val managedFileInfo = analyzer.findManagedFiles(
             absoluteProjectPath = projectDir.canonicalFile,
-            packageManagers = packageManagers
+            packageManagers = enabledPackageManagers
         )
 
         if (managedFileInfo.managedFiles.isEmpty()) {
@@ -94,9 +121,37 @@ class SimpleScannerWrapper(
             }
         }
 
-        // Step 3: Run the analyzer
+        // Step 3: Run the analyzer with error handling for missing references
         logger.info { "Analyzing dependencies..." }
-        val ortResult = analyzer.analyze(managedFileInfo)
+        val ortResult = try {
+            analyzer.analyze(managedFileInfo)
+        } catch (e: IllegalArgumentException) {
+            // Handle "references do not actually refer to packages" error
+            if (e.message?.contains("do not actually refer to packages") == true) {
+                logger.warn { "Analyzer found unresolved package references: ${e.message}" }
+                logger.warn { "This typically happens when dependencies are listed but not installed." }
+                
+                // Try to install dependencies and retry
+                logger.info { "Attempting to install dependencies with 'npm install'..." }
+                val installSuccess = tryInstallNpmDependencies(projectDir)
+                
+                if (installSuccess) {
+                    logger.info { "Dependencies installed, retrying analysis..." }
+                    try {
+                        analyzer.analyze(managedFileInfo)
+                    } catch (e2: Exception) {
+                        logger.warn { "Analysis still failed after npm install: ${e2.message}" }
+                        logger.warn { "Falling back to direct package.json parsing..." }
+                        return null to parsePackageJsonFallback(projectDir, e2.message)
+                    }
+                } else {
+                    logger.warn { "Could not install dependencies. Falling back to direct package.json parsing..." }
+                    return null to parsePackageJsonFallback(projectDir, e.message)
+                }
+            } else {
+                throw e
+            }
+        }
 
         // Step 4: Extract packages and convert to OrtoPed format
         return ortResult to convertOrtResultToScanResult(ortResult, projectDir)
@@ -291,6 +346,168 @@ class SimpleScannerWrapper(
             ),
             unresolvedLicenses = emptyList(),
             aiEnhanced = false
+        )
+    }
+
+    /**
+     * Try to install NPM dependencies to resolve missing package references
+     */
+    private fun tryInstallNpmDependencies(projectDir: File): Boolean {
+        return try {
+            // Find all package.json files
+            val packageJsonFiles = projectDir.walkTopDown()
+                .filter { it.name == "package.json" && !it.path.contains("node_modules") }
+                .toList()
+
+            if (packageJsonFiles.isEmpty()) {
+                logger.warn { "No package.json files found" }
+                return false
+            }
+
+            var anySuccess = false
+            packageJsonFiles.forEach { packageJson ->
+                logger.info { "Running npm install in ${packageJson.parentFile.absolutePath}" }
+                try {
+                    val process = ProcessBuilder("npm", "install", "--legacy-peer-deps", "--ignore-scripts")
+                        .directory(packageJson.parentFile)
+                        .redirectErrorStream(true)
+                        .start()
+
+                    val exitCode = process.waitFor()
+                    if (exitCode == 0) {
+                        logger.info { "npm install succeeded for ${packageJson.parentFile.name}" }
+                        anySuccess = true
+                    } else {
+                        val output = process.inputStream.bufferedReader().readText()
+                        logger.warn { "npm install failed for ${packageJson.parentFile.name}: $output" }
+                    }
+                } catch (e: Exception) {
+                    logger.warn { "Error running npm install: ${e.message}" }
+                }
+            }
+            anySuccess
+        } catch (e: Exception) {
+            logger.warn { "Failed to install NPM dependencies: ${e.message}" }
+            false
+        }
+    }
+
+    /**
+     * Create an empty scan result with a warning message about unresolved references
+     */
+    private fun createEmptyScanResultWithWarning(projectDir: File, errorMessage: String): ScanResult {
+        logger.warn { "Creating empty scan result due to unresolved references" }
+        return ScanResult(
+            projectName = projectDir.name,
+            projectVersion = "unknown",
+            scanDate = Instant.now().toString(),
+            dependencies = emptyList(),
+            summary = ScanSummary(
+                totalDependencies = 0,
+                resolvedLicenses = 0,
+                unresolvedLicenses = 0,
+                aiResolvedLicenses = 0,
+                licenseDistribution = emptyMap()
+            ),
+            unresolvedLicenses = emptyList(),
+            aiEnhanced = false,
+            warnings = listOf("Scan completed with warnings: $errorMessage. Try running 'npm install' in the project directory first.")
+        )
+    }
+
+    /**
+     * Fallback parser that reads package.json files directly when ORT analyzer fails.
+     * This extracts declared dependencies even when node_modules is not installed.
+     */
+    private fun parsePackageJsonFallback(projectDir: File, errorMessage: String?): ScanResult {
+        logger.info { "Parsing package.json files directly as fallback..." }
+        
+        val json = Json { ignoreUnknownKeys = true }
+        val dependencies = mutableListOf<Dependency>()
+        val unresolvedLicenses = mutableListOf<UnresolvedLicense>()
+        
+        // Find all package.json files (excluding node_modules)
+        val packageJsonFiles = projectDir.walkTopDown()
+            .filter { it.name == "package.json" && !it.path.contains("node_modules") }
+            .toList()
+        
+        logger.info { "Found ${packageJsonFiles.size} package.json file(s)" }
+        
+        packageJsonFiles.forEach { packageJson ->
+            try {
+                val content = packageJson.readText()
+                val jsonObj = json.parseToJsonElement(content).jsonObject
+                
+                // Extract project license if available
+                val projectLicense = jsonObj["license"]?.jsonPrimitive?.content
+                
+                // Parse dependencies
+                listOf("dependencies", "devDependencies", "peerDependencies", "optionalDependencies").forEach { depType ->
+                    jsonObj[depType]?.jsonObject?.forEach { (name, versionElement) ->
+                        val version = versionElement.jsonPrimitive.content
+                            .removePrefix("^")
+                            .removePrefix("~")
+                            .removePrefix(">=")
+                            .removePrefix(">")
+                            .removePrefix("<=")
+                            .removePrefix("<")
+                            .trim()
+                        
+                        val depId = "NPM::$name:$version"
+                        
+                        // Check if we already have this dependency
+                        if (dependencies.none { it.id == depId }) {
+                            dependencies.add(
+                                Dependency(
+                                    id = depId,
+                                    name = name,
+                                    version = version,
+                                    declaredLicenses = emptyList(), // Unknown without node_modules
+                                    detectedLicenses = emptyList(),
+                                    concludedLicense = null,
+                                    scope = depType,
+                                    isResolved = false
+                                )
+                            )
+                            
+                            unresolvedLicenses.add(
+                                UnresolvedLicense(
+                                    dependencyId = depId,
+                                    dependencyName = name,
+                                    reason = "License unknown - dependencies not installed. Run 'npm install' for full license detection."
+                                )
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                logger.warn { "Failed to parse ${packageJson.absolutePath}: ${e.message}" }
+            }
+        }
+        
+        logger.info { "Extracted ${dependencies.size} dependencies from package.json files" }
+        
+        val summary = ScanSummary(
+            totalDependencies = dependencies.size,
+            resolvedLicenses = 0,
+            unresolvedLicenses = unresolvedLicenses.size,
+            aiResolvedLicenses = 0,
+            licenseDistribution = emptyMap()
+        )
+        
+        return ScanResult(
+            projectName = projectDir.name,
+            projectVersion = "unknown",
+            scanDate = Instant.now().toString(),
+            dependencies = dependencies,
+            summary = summary,
+            unresolvedLicenses = unresolvedLicenses,
+            aiEnhanced = false,
+            warnings = listOf(
+                "Partial scan: Dependencies extracted from package.json but licenses could not be resolved.",
+                "For complete license information, run 'npm install' in the project directory and scan again.",
+                errorMessage ?: ""
+            ).filter { it.isNotBlank() }
         )
     }
 

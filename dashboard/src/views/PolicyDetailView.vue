@@ -39,9 +39,9 @@ const severityOptions = [
 ]
 
 const actionOptions = [
+  { label: 'Allow', value: 'ALLOW' },
   { label: 'Deny', value: 'DENY' },
-  { label: 'Warn', value: 'WARN' },
-  { label: 'Allow', value: 'ALLOW' }
+  { label: 'Review', value: 'REVIEW' }
 ]
 
 const confidenceOptions = [
@@ -94,12 +94,15 @@ function getActionColor(action: string) {
 
 function addRule() {
   if (!editConfig.value) return
+  const ruleId = `rule-${Date.now()}`
   editConfig.value.rules.push({
+    id: ruleId,
     name: 'new-rule',
     description: 'New rule description',
     severity: 'WARNING',
-    action: 'WARN',
-    enabled: true
+    enabled: true,
+    scopes: [],
+    action: 'REVIEW'
   })
 }
 
@@ -110,12 +113,17 @@ function removeRule(index: number) {
 
 function addExemption() {
   if (!editConfig.value) return
-  editConfig.value.exemptions.push('')
+  editConfig.value.settings.exemptions.push({
+    dependency: '',
+    reason: '',
+    approvedBy: '',
+    approvedDate: ''
+  })
 }
 
 function removeExemption(index: number) {
   if (!editConfig.value) return
-  editConfig.value.exemptions.splice(index, 1)
+  editConfig.value.settings.exemptions.splice(index, 1)
 }
 
 async function savePolicy() {
@@ -194,10 +202,10 @@ onMounted(fetchPolicy)
             <Card class="stat-card">
               <template #content>
                 <div class="stat">
-                  <i class="pi pi-check-circle" style="color: #22c55e;"></i>
+                  <i class="pi pi-tags" style="color: #22c55e;"></i>
                   <div>
-                    <div class="stat-value">{{ policyConfig.allowedLicenses?.length || 0 }}</div>
-                    <div class="stat-label">Allowed Licenses</div>
+                    <div class="stat-value">{{ Object.keys(policyConfig.categories || {}).length }}</div>
+                    <div class="stat-label">Categories</div>
                   </div>
                 </div>
               </template>
@@ -206,22 +214,22 @@ onMounted(fetchPolicy)
             <Card class="stat-card">
               <template #content>
                 <div class="stat">
-                  <i class="pi pi-ban" style="color: #ef4444;"></i>
+                  <i class="pi pi-cog" style="color: #3b82f6;"></i>
                   <div>
-                    <div class="stat-value">{{ policyConfig.deniedLicenses?.length || 0 }}</div>
-                    <div class="stat-label">Denied Licenses</div>
-                  </div>
-                </div>
-              </template>
-            </Card>
-
-            <Card class="stat-card">
-              <template #content>
-                <div class="stat">
-                  <i class="pi pi-shield" style="color: #8b5cf6;"></i>
-                  <div>
-                    <div class="stat-value">{{ policyConfig.exemptions?.length || 0 }}</div>
+                    <div class="stat-value">{{ policyConfig.settings?.exemptions?.length || 0 }}</div>
                     <div class="stat-label">Exemptions</div>
+                  </div>
+                </div>
+              </template>
+            </Card>
+
+            <Card class="stat-card">
+              <template #content>
+                <div class="stat">
+                  <i class="pi pi-info-circle" style="color: #f59e0b;"></i>
+                  <div>
+                    <div class="stat-value">{{ policyConfig.version }}</div>
+                    <div class="stat-label">Version</div>
                   </div>
                 </div>
               </template>
@@ -232,43 +240,43 @@ onMounted(fetchPolicy)
             <h3>Settings</h3>
             <div class="settings-grid">
               <div class="setting-item">
-                <span class="setting-label">Fail on Error</span>
-                <Badge :value="policyConfig.settings?.failOnError ? 'Yes' : 'No'"
-                       :severity="policyConfig.settings?.failOnError ? 'danger' : 'secondary'" />
+                <span class="setting-label">Fail on Errors</span>
+                <Badge :value="policyConfig.settings?.failOn?.errors ? 'Yes' : 'No'"
+                       :severity="policyConfig.settings?.failOn?.errors ? 'danger' : 'secondary'" />
               </div>
               <div class="setting-item">
-                <span class="setting-label">Fail on Warning</span>
-                <Badge :value="policyConfig.settings?.failOnWarning ? 'Yes' : 'No'"
-                       :severity="policyConfig.settings?.failOnWarning ? 'warning' : 'secondary'" />
+                <span class="setting-label">Fail on Warnings</span>
+                <Badge :value="policyConfig.settings?.failOn?.warnings ? 'Yes' : 'No'"
+                       :severity="policyConfig.settings?.failOn?.warnings ? 'warning' : 'secondary'" />
               </div>
               <div class="setting-item">
-                <span class="setting-label">Accept AI Suggestions</span>
-                <Badge :value="policyConfig.settings?.acceptAiSuggestions ? 'Yes' : 'No'"
-                       :severity="policyConfig.settings?.acceptAiSuggestions ? 'success' : 'secondary'" />
+                <span class="setting-label">AI High Confidence</span>
+                <Badge :value="policyConfig.settings?.aiSuggestions?.acceptHighConfidence ? 'Accept' : 'Review'"
+                       :severity="policyConfig.settings?.aiSuggestions?.acceptHighConfidence ? 'success' : 'secondary'" />
               </div>
               <div class="setting-item">
-                <span class="setting-label">Minimum Confidence</span>
-                <Badge :value="policyConfig.settings?.minimumConfidence || 'N/A'" severity="info" />
+                <span class="setting-label">AI Medium Confidence</span>
+                <Badge :value="policyConfig.settings?.aiSuggestions?.treatMediumAsWarning ? 'Warning' : 'Review'"
+                       severity="info" />
               </div>
             </div>
           </div>
-
           <div class="section">
-            <h3>License Lists</h3>
-            <div class="license-lists">
-              <div class="license-list">
-                <h4><i class="pi pi-check-circle"></i> Allowed Licenses</h4>
-                <div class="chips">
-                  <Chip v-for="license in policyConfig.allowedLicenses" :key="license" :label="license" class="allowed-chip" />
-                  <span v-if="!policyConfig.allowedLicenses?.length" class="no-items">No allowed licenses defined</span>
+            <h3>License Categories</h3>
+            <div class="categories-summary">
+              <div v-for="(category, categoryName) in policyConfig.categories" :key="categoryName" class="category-summary">
+                <div class="category-header">
+                  <h4>{{ categoryName }}</h4>
+                  <Badge :value="category.licenses?.length || 0" severity="info" />
+                </div>
+                <p v-if="category.description" class="category-description">{{ category.description }}</p>
+                <div class="category-licenses">
+                  <Chip v-for="license in (category.licenses || []).slice(0, 5)" :key="license" :label="license" size="small" />
+                  <Badge v-if="(category.licenses || []).length > 5" :value="`+${(category.licenses || []).length - 5} more`" severity="secondary" />
                 </div>
               </div>
-              <div class="license-list">
-                <h4><i class="pi pi-ban"></i> Denied Licenses</h4>
-                <div class="chips">
-                  <Chip v-for="license in policyConfig.deniedLicenses" :key="license" :label="license" class="denied-chip" />
-                  <span v-if="!policyConfig.deniedLicenses?.length" class="no-items">No denied licenses defined</span>
-                </div>
+              <div v-if="!policyConfig.categories || !Object.keys(policyConfig.categories).length" class="no-categories">
+                No license categories defined
               </div>
             </div>
           </div>
@@ -311,10 +319,16 @@ onMounted(fetchPolicy)
 
         <!-- Categories Tab -->
         <TabPanel header="Categories">
-          <Accordion v-if="policyConfig.licenseCategories?.length">
-            <AccordionTab v-for="category in policyConfig.licenseCategories" :key="category.name" :header="category.name">
+          <Accordion v-if="policyConfig.categories && Object.keys(policyConfig.categories).length">
+            <AccordionTab v-for="(category, categoryName) in policyConfig.categories" :key="categoryName" :header="categoryName">
+              <div class="category-info" v-if="category.description">
+                <p class="category-description">{{ category.description }}</p>
+              </div>
               <div class="chips">
                 <Chip v-for="license in category.licenses" :key="license" :label="license" />
+              </div>
+              <div v-if="!category.licenses?.length" class="no-licenses">
+                No licenses in this category
               </div>
             </AccordionTab>
           </Accordion>
@@ -326,9 +340,12 @@ onMounted(fetchPolicy)
 
         <!-- Exemptions Tab -->
         <TabPanel header="Exemptions">
-          <div v-if="policyConfig.exemptions?.length" class="exemptions-list">
-            <DataTable :value="policyConfig.exemptions.map((e, i) => ({ id: i, dependency: e }))" stripedRows showGridlines class="p-datatable-sm">
-              <Column field="dependency" header="Exempted Dependency" />
+          <div v-if="policyConfig.settings?.exemptions?.length" class="exemptions-list">
+            <DataTable :value="policyConfig.settings.exemptions" stripedRows showGridlines class="p-datatable-sm">
+              <Column field="dependency" header="Dependency Pattern" style="min-width: 200px" />
+              <Column field="reason" header="Reason" style="min-width: 250px" />
+              <Column field="approvedBy" header="Approved By" style="min-width: 150px" />
+              <Column field="approvedDate" header="Approval Date" style="min-width: 120px" />
             </DataTable>
           </div>
           <div v-else class="empty-section">
@@ -395,20 +412,20 @@ onMounted(fetchPolicy)
               <h3>Settings</h3>
               <div class="settings-form">
                 <div class="setting-row">
-                  <label>Fail on Error</label>
-                  <InputSwitch v-model="editConfig.settings.failOnError" />
+                  <label>Fail on Errors</label>
+                  <InputSwitch v-model="editConfig.settings.failOn.errors" />
                 </div>
                 <div class="setting-row">
-                  <label>Fail on Warning</label>
-                  <InputSwitch v-model="editConfig.settings.failOnWarning" />
+                  <label>Fail on Warnings</label>
+                  <InputSwitch v-model="editConfig.settings.failOn.warnings" />
                 </div>
                 <div class="setting-row">
-                  <label>Accept AI Suggestions</label>
-                  <InputSwitch v-model="editConfig.settings.acceptAiSuggestions" />
+                  <label>Accept High Confidence AI</label>
+                  <InputSwitch v-model="editConfig.settings.aiSuggestions.acceptHighConfidence" />
                 </div>
                 <div class="setting-row">
-                  <label>Minimum Confidence</label>
-                  <Dropdown v-model="editConfig.settings.minimumConfidence" :options="confidenceOptions" optionLabel="label" optionValue="value" style="width: 150px" />
+                  <label>Treat Medium AI as Warning</label>
+                  <InputSwitch v-model="editConfig.settings.aiSuggestions.treatMediumAsWarning" />
                 </div>
               </div>
             </div>
@@ -418,11 +435,16 @@ onMounted(fetchPolicy)
                 <h3>Exemptions</h3>
                 <Button label="Add Exemption" icon="pi pi-plus" size="small" @click="addExemption" />
               </div>
-              <div v-for="(_exemption, index) in editConfig.exemptions" :key="index" class="exemption-row">
-                <InputText v-model="editConfig.exemptions[index]" placeholder="Dependency name (e.g., com.example:library)" class="w-full" />
+              <div v-for="(_exemption, index) in editConfig.settings.exemptions" :key="index" class="exemption-item">
+                <div class="exemption-fields">
+                  <InputText v-model="editConfig.settings.exemptions[index].dependency" placeholder="Dependency pattern (e.g., npm::package:* )" class="w-full mb-2" />
+                  <InputText v-model="editConfig.settings.exemptions[index].reason" placeholder="Reason for exemption" class="w-full mb-2" />
+                  <InputText v-model="editConfig.settings.exemptions[index].approvedBy" placeholder="Approved by" class="w-full mb-2" />
+                  <InputText v-model="editConfig.settings.exemptions[index].approvedDate" placeholder="Approval date" class="w-full" />
+                </div>
                 <Button icon="pi pi-trash" severity="danger" text size="small" @click="removeExemption(index)" />
               </div>
-              <div v-if="!editConfig.exemptions?.length" class="no-items">
+              <div v-if="!editConfig.settings.exemptions?.length" class="no-items">
                 No exemptions. Click "Add Exemption" to add one.
               </div>
             </div>
@@ -759,5 +781,76 @@ onMounted(fetchPolicy)
 .error-state p {
   color: #64748b;
   margin-bottom: 1.5rem;
+}
+
+/* Category summary styles */
+.categories-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem;
+}
+
+.category-summary {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  background: #f8fafc;
+}
+
+.category-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.category-header h4 {
+  margin: 0;
+  font-size: 1rem;
+  color: #1e293b;
+}
+
+.category-description {
+  color: #64748b;
+  font-size: 0.875rem;
+  margin: 0.5rem 0;
+}
+
+.category-licenses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.no-categories {
+  text-align: center;
+  padding: 2rem;
+  color: #94a3b8;
+  font-style: italic;
+  grid-column: 1 / -1;
+}
+
+.category-info {
+  margin-bottom: 0.75rem;
+}
+
+.no-licenses {
+  color: #94a3b8;
+  font-style: italic;
+  font-size: 0.875rem;
+}
+
+.exemption-item {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+}
+
+.exemption-fields {
+  flex: 1;
 }
 </style>

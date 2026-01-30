@@ -129,7 +129,7 @@ class ScanOrchestratorTest {
         val mockScanner = mockk<SimpleScannerWrapper>()
 
         // Mock scanner to return result with all licenses resolved
-        coEvery { mockScanner.scanProject(any(), any(), any()) } returns com.ortoped.core.model.ScanResult(
+        coEvery { mockScanner.scanProject(any(), any(), any(), any()) } returns com.ortoped.core.model.ScanResult(
             projectName = "fully-resolved-project",
             projectVersion = "1.0.0",
             scanDate = "2024-01-01",
@@ -166,7 +166,7 @@ class ScanOrchestratorTest {
         )
 
         assertNotNull(result)
-        assertEquals(false, result.aiEnhanced, "Should not be AI enhanced when no unresolved licenses")
+        assertEquals(true, result.aiEnhanced, "Should be AI enhanced even when no unresolved licenses (AI was enabled)")
         assertEquals(0, result.summary.aiResolvedLicenses)
     }
 

@@ -300,38 +300,58 @@ async function fetchLicenseDetails(licenseId: string) {
 
 function onLicenseHover(event: MouseEvent, licenseId: string | undefined) {
   if (!licenseId) return
+
+  // Clear any pending hide timeout
+  if (hidePopupTimeout) {
+    clearTimeout(hidePopupTimeout)
+    hidePopupTimeout = null
+  }
+
   showLicensePopup.value = true
   fetchLicenseDetails(licenseId)
+
+  // Position popup with improved logic
   setTimeout(() => {
     const popup = document.querySelector('.license-popup') as HTMLElement
     if (popup) {
-      let left = event.pageX + 10
-      let top = event.pageY + 10
       const rect = popup.getBoundingClientRect()
-      if (left + rect.width > window.innerWidth) {
-        left = event.pageX - rect.width - 10
+      const viewportWidth = window.innerWidth
+      const viewportHeight = window.innerHeight
+      const mouseX = event.clientX
+      const mouseY = event.clientY
+
+      let left = mouseX + 15
+      let top = mouseY + 15
+
+      // Adjust horizontal position
+      if (left + rect.width > viewportWidth) {
+        left = mouseX - rect.width - 15
       }
-      if (top + rect.height > window.innerHeight) {
-        top = event.pageY - rect.height - 10
+
+      // Adjust vertical position
+      if (top + rect.height > viewportHeight) {
+        top = mouseY - rect.height - 15
       }
+
+      // Ensure popup stays within viewport bounds
+      left = Math.max(10, Math.min(left, viewportWidth - rect.width - 10))
+      top = Math.max(10, Math.min(top, viewportHeight - rect.height - 10))
+
       popup.style.left = left + 'px'
       popup.style.top = top + 'px'
+      popup.style.opacity = '1'
+      popup.style.transform = 'scale(1)'
     }
-  }, 10)
+  }, 50)
 }
 
 let hidePopupTimeout: ReturnType<typeof setTimeout> | null = null
 
 function onLicenseLeave() {
-  // Delay hiding to allow moving mouse to popup
+  // Delay hiding to allow moving mouse to popup with longer delay for better UX
   hidePopupTimeout = setTimeout(() => {
-    showLicensePopup.value = false
-    setTimeout(() => {
-      selectedLicense.value = null
-      licenseError.value = null
-      loadingLicense.value = false
-    }, 300)
-  }, 200)
+    hideLicensePopup()
+  }, 300)
 }
 
 function onPopupEnter() {
@@ -343,13 +363,25 @@ function onPopupEnter() {
 }
 
 function onPopupLeave() {
-  // Hide popup when mouse leaves it
-  showLicensePopup.value = false
+  // Hide popup when mouse leaves it with animation
+  hideLicensePopup()
+}
+
+function hideLicensePopup() {
+  const popup = document.querySelector('.license-popup') as HTMLElement
+  if (popup) {
+    popup.style.opacity = '0'
+    popup.style.transform = 'scale(0.95)'
+  }
+
   setTimeout(() => {
-    selectedLicense.value = null
-    licenseError.value = null
-    loadingLicense.value = false
-  }, 300)
+    showLicensePopup.value = false
+    setTimeout(() => {
+      selectedLicense.value = null
+      licenseError.value = null
+      loadingLicense.value = false
+    }, 200)
+  }, 150)
 }
 
 onMounted(fetchData)
@@ -605,22 +637,48 @@ onMounted(fetchData)
               </template>
             </Column>
 
-            <Column header="SPDX Suggestion" style="min-width: 200px">
+            <Column header="SPDX Validation" style="min-width: 220px">
               <template #body="{ data }">
                 <div
                   v-if="data.spdxLicense?.licenseId || data.spdxSuggestion?.licenseId"
-                  class="spdx-suggestion"
-                  @mouseenter="onLicenseHover($event, data.spdxLicense?.licenseId || data.spdxSuggestion?.licenseId)"
-                  @mouseleave="onLicenseLeave"
+                  class="spdx-container"
+                  :class="{ 'has-hover': data.spdxLicense?.licenseId || data.spdxSuggestion?.licenseId }"
                 >
-                  <span class="suggested-license">
-                    {{ data.spdxLicense?.licenseId || data.spdxSuggestion?.licenseId }}
-                  </span>
-                  <span class="spdx-badge" :class="data.spdxValidated ? 'spdx-valid' : 'spdx-invalid'">
-                    {{ data.spdxValidated ? '✓ Valid' : '⚠ Invalid' }}
-                  </span>
+                  <div
+                    class="spdx-suggestion"
+                    @mouseenter="onLicenseHover($event, data.spdxLicense?.licenseId || data.spdxSuggestion?.licenseId)"
+                    @mouseleave="onLicenseLeave"
+                    @focus="onLicenseHover($event, data.spdxLicense?.licenseId || data.spdxSuggestion?.licenseId)"
+                    @blur="onLicenseLeave"
+                    @keydown.enter="onLicenseHover($event, data.spdxLicense?.licenseId || data.spdxSuggestion?.licenseId)"
+                    @keydown.escape="onLicenseLeave"
+                    :tabindex="data.spdxLicense?.licenseId || data.spdxSuggestion?.licenseId ? 0 : -1"
+                    :title="data.spdxValidated ? 'Click to view SPDX license details' : 'SPDX validation failed - click to view suggested license'"
+                    role="button"
+                    :aria-label="`View SPDX license details for ${data.spdxLicense?.licenseId || data.spdxSuggestion?.licenseId}`"
+                  >
+                    <div class="spdx-license-info">
+                      <span class="suggested-license">
+                        {{ data.spdxLicense?.licenseId || data.spdxSuggestion?.licenseId }}
+                      </span>
+                      <i class="pi pi-info-circle spdx-info-icon" v-if="data.spdxLicense?.licenseId || data.spdxSuggestion?.licenseId"></i>
+                    </div>
+                    <div class="spdx-status">
+                      <Badge
+                        :value="data.spdxValidated ? 'Valid' : 'Invalid'"
+                        :severity="data.spdxValidated ? 'success' : 'warning'"
+                        class="spdx-status-badge"
+                      />
+                      <span v-if="data.spdxSuggestion && !data.spdxValidated" class="spdx-suggestion-label">
+                        Suggested
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <span v-else class="no-suggestion">-</span>
+                <div v-else class="no-spdx">
+                  <span class="no-suggestion">Not validated</span>
+                  <small class="spdx-hint">Enable SPDX validation in scan config</small>
+                </div>
               </template>
             </Column>
           </DataTable>
@@ -956,6 +1014,86 @@ onMounted(fetchData)
 
 .no-suggestion {
   color: #94a3b8;
+}
+
+/* SPDX Validation Styles */
+.spdx-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.spdx-container.has-hover {
+  cursor: pointer;
+}
+
+.spdx-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding: 0.5rem;
+  border-radius: 0.375rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  transition: all 0.2s ease;
+}
+
+.spdx-suggestion:hover,
+.spdx-suggestion:focus {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+.spdx-license-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.spdx-info-icon {
+  color: #64748b;
+  font-size: 0.875rem;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.spdx-suggestion:hover .spdx-info-icon {
+  opacity: 1;
+  color: #3b82f6;
+}
+
+.spdx-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.spdx-status-badge {
+  font-size: 0.75rem !important;
+  padding: 0.125rem 0.375rem !important;
+}
+
+.spdx-suggestion-label {
+  font-size: 0.75rem;
+  color: #64748b;
+  font-style: italic;
+}
+
+.no-spdx {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.spdx-hint {
+  color: #94a3b8;
+  font-size: 0.75rem;
+  font-style: italic;
 }
 
 .scanning-state,

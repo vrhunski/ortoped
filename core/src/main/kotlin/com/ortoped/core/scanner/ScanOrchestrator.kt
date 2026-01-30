@@ -27,7 +27,8 @@ class ScanOrchestrator(
         enableSpdx: Boolean = false,
         enableSourceScan: Boolean = false,
         parallelAiCalls: Boolean = true,
-        demoMode: Boolean = false
+        demoMode: Boolean = false,
+        disabledPackageManagers: List<String> = emptyList()
     ): ScanResult {
         logger.info { "Starting orchestrated scan for: ${projectDir.absolutePath}" }
         logger.info { "Source code scanning: $enableSourceScan" }
@@ -42,7 +43,8 @@ class ScanOrchestrator(
         val scanResult = scanner.scanProject(
             projectDir = projectDir,
             demoMode = demoMode,
-            enableSourceScan = enableSourceScan && scannerConfig.enabled
+            enableSourceScan = enableSourceScan && scannerConfig.enabled,
+            disabledPackageManagers = disabledPackageManagers
         )
 
         if (scanResult.sourceCodeScanned) {
@@ -68,30 +70,28 @@ class ScanOrchestrator(
         }
 */
 
-        if (scanResult.unresolvedLicenses.isEmpty()) {
-            logger.info { "No unresolved licenses to enhance with AI." }
-            return scanResult
-        }
-
         logger.info { "Step 3/4: ${if (enableAiResolution) "AI-enhancing ${scanResult.unresolvedLicenses.size} unresolved licenses..." else "Skipping AI enhancement"}" }
-        val enhancedDependencies =  if (enableAiResolution) {
+        val aiEnhancedDependencies =  if (enableAiResolution && scanResult.unresolvedLicenses.isNotEmpty()) {
             enhanceWithAi(
                 scanResult.dependencies,
                 scanResult.unresolvedLicenses,
                 parallelAiCalls
             )
         } else{
-            logger.info { "AI resolution is disabled. Skipping AI enhancement." }
+            if (enableAiResolution) {
+                logger.info { "AI resolution is enabled but no unresolved licenses to enhance." }
+            } else {
+                logger.info { "AI resolution is disabled. Skipping AI enhancement." }
+            }
             scanResult.dependencies
         }
 
         // Calculate new summary
         val aiResolvedCount = if (enableAiResolution) {
-            enhancedDependencies.count {
+            aiEnhancedDependencies.count {
                 !it.isResolved && it.aiSuggestion != null && it.aiSuggestion.confidence == "HIGH"
             }
         } else 0
-
 
         val updatedSummary = scanResult.summary.copy(
             aiResolvedLicenses = aiResolvedCount
@@ -102,10 +102,10 @@ class ScanOrchestrator(
         // Step 4: SPDX enhancement for license validation and suggestions
         val spdxEnhancedDependencies = if (enableSpdx) {
             logger.info { "Step 4/4: SPDX-enhancing dependencies..." }
-            enhanceWithSpdx(enhancedDependencies)
+            enhanceWithSpdx(aiEnhancedDependencies)
         } else {
             logger.info { "SPDX enhancement is disabled. Skipping." }
-            enhancedDependencies
+            aiEnhancedDependencies
         }
 
         val spdxResolvedCount = if (enableSpdx) {

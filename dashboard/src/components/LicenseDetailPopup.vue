@@ -86,6 +86,11 @@ const emit = defineEmits<{
   max-height: 80vh;
   display: flex;
   flex-direction: column;
+  opacity: 0;
+  transform: scale(0.95);
+  transform-origin: top left;
+  transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+  pointer-events: auto;
 }
 
 .popup-header {
