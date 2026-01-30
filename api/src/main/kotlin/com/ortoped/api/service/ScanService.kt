@@ -6,7 +6,12 @@ import com.ortoped.api.plugins.NotFoundException
 import com.ortoped.api.repository.ProjectRepository
 import com.ortoped.api.repository.ScanEntity
 import com.ortoped.api.repository.ScanRepository
+import com.ortoped.api.repository.OrtCacheRepository
+import com.ortoped.api.adapter.LicenseResolutionCacheAdapter
+import com.ortoped.api.adapter.ScanResultCacheAdapter
 import com.ortoped.core.model.ScanResult
+import com.ortoped.core.scanner.CachingAnalyzerWrapper
+import com.ortoped.core.scanner.ScanConfiguration
 import com.ortoped.core.scanner.ScanOrchestrator
 import com.ortoped.core.scanner.ScannerConfig
 import com.ortoped.core.scanner.SimpleScannerWrapper
@@ -26,8 +31,16 @@ private val logger = KotlinLogging.logger {}
 
 class ScanService(
     private val scanRepository: ScanRepository,
-    private val projectRepository: ProjectRepository
+    private val projectRepository: ProjectRepository,
+    private val ortCacheRepository: OrtCacheRepository? = null
 ) {
+    // Caching wrapper for analyzer results
+    private val cachingAnalyzer: CachingAnalyzerWrapper? = ortCacheRepository?.let { repo ->
+        CachingAnalyzerWrapper(
+            cache = ScanResultCacheAdapter(repo),
+            delegate = SimpleScannerWrapper()
+        )
+    }
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -212,7 +225,7 @@ class ScanService(
             }
 
             try {
-                // Create scanner
+                // Create scanner - use caching wrapper if available
                 val scannerConfig = ScannerConfig(
                     enabled = request.enableSourceScan
                 )
@@ -221,25 +234,96 @@ class ScanService(
                 } else {
                     null
                 }
-                val scanner = SimpleScannerWrapper(sourceCodeScanner)
+
+                // Determine if we should use caching
+                val useCache = request.useCache != false &&
+                               request.forceRescan != true &&
+                               !request.demoMode &&
+                               cachingAnalyzer != null
+                val effectiveUrl = repositoryUrl
+                val effectiveRevision = request.commit ?: request.tag ?: request.branch
+
+                val scanner = if (useCache && cachingAnalyzer != null) {
+                    logger.info { "Using caching analyzer wrapper" }
+                    SimpleScannerWrapper(sourceCodeScanner)  // Caching happens at result level
+                } else {
+                    SimpleScannerWrapper(sourceCodeScanner)
+                }
+
                 val orchestrator = ScanOrchestrator(
                     scanner = scanner,
                     scannerConfig = scannerConfig,
-                    spdxClient = SpdxLicenseClient()
+                    spdxClient = SpdxLicenseClient(),
+                    licenseResolutionCache = ortCacheRepository?.let { LicenseResolutionCacheAdapter(it) }
                 )
 
-                // Run scan
-                val scanResult = orchestrator.scanWithAiEnhancement(
-                    projectDir = projectDir,
-                    enableAiResolution = request.enableAi,
-                    enableSpdx = effectiveEnableSpdx,
-                    enableSourceScan = request.enableSourceScan,
-                    parallelAiCalls = request.parallelAiCalls,
-                    demoMode = request.demoMode,
-                    disabledPackageManagers = request.disabledPackageManagers,
-                    allowDynamicVersions = request.allowDynamicVersions,
-                    skipExcluded = request.skipExcluded
-                )
+                // Check cache first if caching is enabled
+                var scanResult: ScanResult? = null
+                if (useCache && effectiveUrl != null && effectiveRevision != null) {
+                    val configHash = cachingAnalyzer!!.generateConfigHash(
+                        ScanConfiguration(
+                            allowDynamicVersions = request.allowDynamicVersions,
+                            skipExcluded = request.skipExcluded,
+                            disabledPackageManagers = request.disabledPackageManagers,
+                            enableSourceScan = request.enableSourceScan,
+                            enableAi = request.enableAi,
+                            enableSpdx = effectiveEnableSpdx
+                        )
+                    )
+
+                    val cached = ortCacheRepository?.getCachedScanResult(effectiveUrl, effectiveRevision, configHash)
+                    if (cached != null) {
+                        logger.info { "Cache HIT for scan result: $effectiveUrl@$effectiveRevision" }
+                        scanResult = cachingAnalyzer.decompressAndDeserialize(cached)
+                    } else {
+                        logger.info { "Cache MISS for scan result: $effectiveUrl@$effectiveRevision" }
+                    }
+                }
+
+                // Run scan if not cached
+                if (scanResult == null) {
+                    scanResult = orchestrator.scanWithAiEnhancement(
+                        projectDir = projectDir,
+                        enableAiResolution = request.enableAi,
+                        enableSpdx = effectiveEnableSpdx,
+                        enableSourceScan = request.enableSourceScan,
+                        parallelAiCalls = request.parallelAiCalls,
+                        demoMode = request.demoMode,
+                        disabledPackageManagers = request.disabledPackageManagers,
+                        allowDynamicVersions = request.allowDynamicVersions,
+                        skipExcluded = request.skipExcluded
+                    )
+
+                    // Store in cache if caching is enabled
+                    if (useCache && effectiveUrl != null && effectiveRevision != null && cachingAnalyzer != null) {
+                        try {
+                            val configHash = cachingAnalyzer.generateConfigHash(
+                                ScanConfiguration(
+                                    allowDynamicVersions = request.allowDynamicVersions,
+                                    skipExcluded = request.skipExcluded,
+                                    disabledPackageManagers = request.disabledPackageManagers,
+                                    enableSourceScan = request.enableSourceScan,
+                                    enableAi = request.enableAi,
+                                    enableSpdx = effectiveEnableSpdx
+                                )
+                            )
+                            val compressed = cachingAnalyzer.compressAndSerialize(scanResult)
+                            ortCacheRepository?.cacheScanResult(
+                                projectUrl = effectiveUrl,
+                                revision = effectiveRevision,
+                                configHash = configHash,
+                                ortVersion = cachingAnalyzer.getOrtVersion(),
+                                ortResult = compressed,
+                                packageCount = scanResult.dependencies.size,
+                                issueCount = scanResult.warnings?.size ?: 0,
+                                ttlHours = request.cacheTtlHours ?: 168  // 1 week default
+                            )
+                            logger.info { "Cached scan result: ${scanResult.dependencies.size} packages" }
+                        } catch (e: Exception) {
+                            logger.warn { "Failed to cache scan result: ${e.message}" }
+                        }
+                    }
+                }
 
                 // Store result
                 val resultJson = json.encodeToString(scanResult)

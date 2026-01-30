@@ -50,7 +50,11 @@ data class TriggerScanRequest(
     val commit: String? = null,
     // Analyzer Configuration
     val allowDynamicVersions: Boolean = true,
-    val skipExcluded: Boolean = true
+    val skipExcluded: Boolean = true,
+    // Cache Configuration
+    val useCache: Boolean? = true,      // Enable result caching (default: true)
+    val cacheTtlHours: Int? = 168,      // Cache TTL in hours (default: 1 week)
+    val forceRescan: Boolean? = false   // Bypass cache and force fresh scan
 )
 
 @Serializable

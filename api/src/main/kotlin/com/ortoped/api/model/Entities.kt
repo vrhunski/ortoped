@@ -227,3 +227,73 @@ enum class PriorityLevel(val value: String) {
         }
     }
 }
+
+// ============================================================================
+// ORT CACHE TABLES (Phase 5 - PostgreSQL Storage)
+// ============================================================================
+
+/**
+ * ORT package cache table - caches analyzer results per-package
+ */
+object OrtPackageCache : UUIDTable("ort_package_cache") {
+    val packageId = varchar("package_id", 500)
+    val packageType = varchar("package_type", 50)
+    val ortVersion = varchar("ort_version", 50)
+    val analyzerVersion = varchar("analyzer_version", 50).nullable()
+    val declaredLicenses = text("declared_licenses").nullable() // JSONB
+    val concludedLicense = varchar("concluded_license", 255).nullable()
+    val homepageUrl = varchar("homepage_url", 1000).nullable()
+    val vcsUrl = varchar("vcs_url", 1000).nullable()
+    val description = text("description").nullable()
+    val sourceArtifactHash = varchar("source_artifact_hash", 128).nullable()
+    val vcsRevision = varchar("vcs_revision", 128).nullable()
+    val createdAt = timestamp("created_at")
+    val lastAccessedAt = timestamp("last_accessed_at")
+    val accessCount = integer("access_count").default(1)
+}
+
+/**
+ * ORT scan result cache table - caches full scan results per-project
+ */
+object OrtScanResultCache : UUIDTable("ort_scan_result_cache") {
+    val projectUrl = varchar("project_url", 1000).nullable()
+    val projectRevision = varchar("project_revision", 128).nullable()
+    val projectPath = varchar("project_path", 500).nullable()
+    val ortVersion = varchar("ort_version", 50)
+    val configHash = varchar("config_hash", 64)
+    val ortResultJson = binary("ort_result_json").nullable() // GZIP compressed
+    val resultSizeBytes = integer("result_size_bytes").nullable()
+    val packageCount = integer("package_count").nullable()
+    val issueCount = integer("issue_count").nullable()
+    val createdAt = timestamp("created_at")
+    val expiresAt = timestamp("expires_at").nullable()
+}
+
+/**
+ * License resolution cache table - caches AI and SPDX resolution results
+ */
+object LicenseResolutionCache : UUIDTable("license_resolution_cache") {
+    val packageId = varchar("package_id", 500)
+    val declaredLicenseRaw = text("declared_license_raw").nullable()
+    val resolvedSpdxId = varchar("resolved_spdx_id", 255).nullable()
+    val resolutionSource = varchar("resolution_source", 50).nullable() // AI, SPDX_MATCH, SCANNER, MANUAL
+    val confidence = varchar("confidence", 20).nullable() // HIGH, MEDIUM, LOW
+    val reasoning = text("reasoning").nullable()
+    val createdAt = timestamp("created_at")
+}
+
+/**
+ * Resolution source enum
+ */
+enum class ResolutionSource(val value: String) {
+    AI("AI"),
+    SPDX_MATCH("SPDX_MATCH"),
+    SCANNER("SCANNER"),
+    MANUAL("MANUAL");
+
+    companion object {
+        fun fromString(value: String): ResolutionSource? {
+            return entries.find { it.value == value }
+        }
+    }
+}

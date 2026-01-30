@@ -1,6 +1,7 @@
 package com.ortoped.core.scanner
 
-import com.ortoped.core.ai.LicenseResolver
+import com.ortoped.core.ai.CachingLicenseResolver
+import com.ortoped.core.ai.LicenseResolutionCache
 import com.ortoped.core.model.Dependency
 import com.ortoped.core.model.ScanResult
 import com.ortoped.core.model.ScanSummary
@@ -16,10 +17,39 @@ private val logger = KotlinLogging.logger {}
 
 class ScanOrchestrator(
     private val scanner: SimpleScannerWrapper = SimpleScannerWrapper(),
-    private val licenseResolver: LicenseResolver = LicenseResolver(),
+    private val licenseResolver: CachingLicenseResolver = CachingLicenseResolver(),
     private val spdxClient: SpdxLicenseClient = SpdxLicenseClient(),
     private val scannerConfig: ScannerConfig = ScannerConfig()
 ) {
+    /**
+     * Secondary constructor for backwards compatibility with existing code
+     * that creates ScanOrchestrator without a cache.
+     */
+    constructor(
+        scanner: SimpleScannerWrapper,
+        scannerConfig: ScannerConfig,
+        spdxClient: SpdxLicenseClient
+    ) : this(
+        scanner = scanner,
+        licenseResolver = CachingLicenseResolver(cache = null),
+        spdxClient = spdxClient,
+        scannerConfig = scannerConfig
+    )
+
+    /**
+     * Constructor with explicit license resolution cache
+     */
+    constructor(
+        scanner: SimpleScannerWrapper,
+        scannerConfig: ScannerConfig,
+        spdxClient: SpdxLicenseClient,
+        licenseResolutionCache: LicenseResolutionCache?
+    ) : this(
+        scanner = scanner,
+        licenseResolver = CachingLicenseResolver(cache = licenseResolutionCache),
+        spdxClient = spdxClient,
+        scannerConfig = scannerConfig
+    )
 
     suspend fun scanWithAiEnhancement(
         projectDir: File,

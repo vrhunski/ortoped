@@ -4,6 +4,7 @@ import com.ortoped.api.plugins.*
 import com.ortoped.api.routes.*
 import com.ortoped.api.service.*
 import com.ortoped.api.repository.*
+import com.ortoped.api.jobs.CacheCleanupJob
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
@@ -40,13 +41,14 @@ fun Application.module() {
     val curationSessionRepository = CurationSessionRepository()
     val curatedScanRepository = CuratedScanRepository()
     val curationTemplateRepository = CurationTemplateRepository()
+    val ortCacheRepository = OrtCacheRepository()
 
     // Initialize graph service first (needed by other services)
     val licenseGraphService = LicenseGraphService()
 
     // Initialize services
     val projectService = ProjectService(projectRepository)
-    val scanService = ScanService(scanRepository, projectRepository)
+    val scanService = ScanService(scanRepository, projectRepository, ortCacheRepository)
     val policyService = PolicyService(policyRepository, licenseGraphService)
     val authService = AuthService(apiKeyRepository)
     val spdxService = SpdxService()
@@ -80,8 +82,19 @@ fun Application.module() {
         curationService = curationService,
         templateService = templateService,
         reportService = reportService,
-        licenseGraphService = licenseGraphService
+        licenseGraphService = licenseGraphService,
+        ortCacheRepository = ortCacheRepository
     )
+
+    // Start background jobs
+    val cacheCleanupJob = CacheCleanupJob(ortCacheRepository, intervalHours = 6)
+    cacheCleanupJob.start()
+
+    // Register shutdown hook for cleanup job
+    environment.monitor.subscribe(ApplicationStopped) {
+        cacheCleanupJob.stop()
+        logger.info { "Cache cleanup job stopped on application shutdown" }
+    }
 
     logger.info { "OrtoPed API server started successfully" }
 }

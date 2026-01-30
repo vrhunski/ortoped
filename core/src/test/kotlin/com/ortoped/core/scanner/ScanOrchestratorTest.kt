@@ -1,6 +1,6 @@
 package com.ortoped.core.scanner
 
-import com.ortoped.core.ai.LicenseResolver
+import com.ortoped.core.ai.CachingLicenseResolver
 import com.ortoped.core.model.LicenseSuggestion
 import com.ortoped.core.model.UnresolvedLicense
 import io.mockk.coEvery
@@ -34,8 +34,8 @@ class ScanOrchestratorTest {
 
     @Test
     fun `should enhance scan with AI when enabled`(@TempDir tempDir: File) = runBlocking {
-        // Mock license resolver with controlled responses
-        val mockResolver = mockk<LicenseResolver>()
+        // Mock caching license resolver with controlled responses
+        val mockResolver = mockk<CachingLicenseResolver>()
         coEvery { mockResolver.resolveLicense(any()) } returns LicenseSuggestion(
             suggestedLicense = "MIT License",
             confidence = "HIGH",
@@ -67,7 +67,7 @@ class ScanOrchestratorTest {
 
     @Test
     fun `should handle parallel AI resolution`(@TempDir tempDir: File) = runBlocking {
-        val mockResolver = mockk<LicenseResolver>()
+        val mockResolver = mockk<CachingLicenseResolver>()
         coEvery { mockResolver.resolveLicense(any()) } returns LicenseSuggestion(
             suggestedLicense = "Apache-2.0",
             confidence = "HIGH",
@@ -96,7 +96,7 @@ class ScanOrchestratorTest {
 
     @Test
     fun `should handle sequential AI resolution`(@TempDir tempDir: File) = runBlocking {
-        val mockResolver = mockk<LicenseResolver>()
+        val mockResolver = mockk<CachingLicenseResolver>()
         coEvery { mockResolver.resolveLicense(any()) } returns LicenseSuggestion(
             suggestedLicense = "BSD-2-Clause",
             confidence = "HIGH",
@@ -125,11 +125,11 @@ class ScanOrchestratorTest {
 
     @Test
     fun `should skip AI when no unresolved licenses`(@TempDir tempDir: File) = runBlocking {
-        val mockResolver = mockk<LicenseResolver>(relaxed = true)
+        val mockResolver = mockk<CachingLicenseResolver>(relaxed = true)
         val mockScanner = mockk<SimpleScannerWrapper>()
 
         // Mock scanner to return result with all licenses resolved
-        coEvery { mockScanner.scanProject(any(), any(), any(), any()) } returns com.ortoped.core.model.ScanResult(
+        coEvery { mockScanner.scanProject(any(), any(), any(), any(), any(), any()) } returns com.ortoped.core.model.ScanResult(
             projectName = "fully-resolved-project",
             projectVersion = "1.0.0",
             scanDate = "2024-01-01",
@@ -172,7 +172,7 @@ class ScanOrchestratorTest {
 
     @Test
     fun `should count only HIGH confidence AI suggestions`(@TempDir tempDir: File) = runBlocking {
-        val mockResolver = mockk<LicenseResolver>()
+        val mockResolver = mockk<CachingLicenseResolver>()
         var callCount = 0
 
         // Alternate between HIGH and MEDIUM confidence
@@ -221,7 +221,7 @@ class ScanOrchestratorTest {
 
     @Test
     fun `should handle AI resolver failures gracefully`(@TempDir tempDir: File) = runBlocking {
-        val mockResolver = mockk<LicenseResolver>()
+        val mockResolver = mockk<CachingLicenseResolver>()
         coEvery { mockResolver.resolveLicense(any()) } throws RuntimeException("API error")
 
         val scanner = SimpleScannerWrapper()
@@ -244,7 +244,7 @@ class ScanOrchestratorTest {
 
     @Test
     fun `should preserve original dependencies when AI fails`(@TempDir tempDir: File) = runBlocking {
-        val mockResolver = mockk<LicenseResolver>()
+        val mockResolver = mockk<CachingLicenseResolver>()
         coEvery { mockResolver.resolveLicense(any()) } returns null
 
         val scanner = SimpleScannerWrapper()
@@ -283,7 +283,7 @@ class ScanOrchestratorTest {
 
     @Test
     fun `should update summary after AI enhancement`(@TempDir tempDir: File) = runBlocking {
-        val mockResolver = mockk<LicenseResolver>()
+        val mockResolver = mockk<CachingLicenseResolver>()
         coEvery { mockResolver.resolveLicense(any()) } returns LicenseSuggestion(
             suggestedLicense = "MIT",
             confidence = "HIGH",

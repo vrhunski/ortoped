@@ -1,0 +1,56 @@
+# ORT Configuration for Ortoped
+# This file configures the OSS Review Toolkit settings
+
+ort:
+  # Analyzer settings
+  analyzer:
+    allowDynamicVersions: true
+    skipExcluded: true
+
+  # Scanner settings (for future source code scanning)
+  scanner:
+    skipConcluded: true
+
+    # PostgreSQL storage configuration
+    # Note: Ortoped uses its own caching layer, but this can be enabled
+    # for native ORT scanner result caching if needed
+    storages:
+      postgresStorage:
+        connection:
+          url: ${DATABASE_URL:-jdbc:postgresql://localhost:5432/ortoped}
+          schema: "ort_native"
+          username: ${DATABASE_USER:-ortoped}
+          password: ${DATABASE_PASSWORD:-ortoped}
+          sslmode: ${DATABASE_SSL_MODE:-disable}
+
+        # Connection pool settings (HikariCP)
+        connectionTimeout: 30000      # 30 seconds
+        idleTimeout: 600000           # 10 minutes
+        maxLifetime: 1800000          # 30 minutes
+        maximumPoolSize: 5
+        minimumIdle: 1
+
+    # Storage readers/writers (disabled by default - ortoped uses its own cache)
+    # Uncomment to enable native ORT caching alongside ortoped's cache
+    # storageReaders:
+    #   - postgresStorage
+    # storageWriters:
+    #   - postgresStorage
+
+# Advisor configuration (vulnerability scanning)
+advisor:
+  # OSV (Open Source Vulnerabilities) - free, no API key required
+  osv:
+    serverUrl: "https://api.osv.dev"
+
+# Downloader configuration
+downloader:
+  # Allow downloading source code for license scanning
+  allowMovingRevisions: true
+
+# Reporter configuration
+reporter:
+  # Default output formats
+  formats:
+    - CycloneDx
+    - SpdxDocument
