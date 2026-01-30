@@ -1,5 +1,6 @@
 package com.ortoped.core.policy
 
+import com.ortoped.core.policy.explanation.EnhancedViolation
 import kotlinx.serialization.Serializable
 
 /**
@@ -16,7 +17,8 @@ data class PolicyReport(
     val violations: List<PolicyViolation>,
     val exemptedDependencies: List<ExemptedDependency>,
     val passed: Boolean,
-    val aiEnhanced: Boolean = false
+    val aiEnhanced: Boolean = false,
+    val enhancedViolations: List<EnhancedViolation>? = null
 )
 
 /**

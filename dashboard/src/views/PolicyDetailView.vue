@@ -44,11 +44,27 @@ const actionOptions = [
   { label: 'Review', value: 'REVIEW' }
 ]
 
-const confidenceOptions = [
-  { label: 'High', value: 'HIGH' },
-  { label: 'Medium', value: 'MEDIUM' },
-  { label: 'Low', value: 'LOW' }
-]
+// Ensure config has all required nested properties with defaults
+function normalizeConfig(config: PolicyConfig): PolicyConfig {
+  return {
+    ...config,
+    settings: {
+      ...config.settings,
+      failOn: {
+        errors: true,
+        warnings: false,
+        ...config.settings?.failOn
+      },
+      aiSuggestions: {
+        acceptHighConfidence: true,
+        treatMediumAsWarning: true,
+        rejectLowConfidence: false,
+        ...config.settings?.aiSuggestions
+      },
+      exemptions: config.settings?.exemptions || []
+    }
+  }
+}
 
 async function fetchPolicy() {
   loading.value = true
@@ -57,11 +73,12 @@ async function fetchPolicy() {
     policy.value = response.data
 
     try {
-      policyConfig.value = JSON.parse(response.data.config) as PolicyConfig
+      const parsedConfig = JSON.parse(response.data.config) as PolicyConfig
+      policyConfig.value = normalizeConfig(parsedConfig)
       // Initialize edit form
       editName.value = policyConfig.value.name || response.data.name
       editDescription.value = policyConfig.value.description || ''
-      editConfig.value = JSON.parse(JSON.stringify(policyConfig.value)) // Deep clone
+      editConfig.value = normalizeConfig(JSON.parse(JSON.stringify(parsedConfig))) // Deep clone with defaults
     } catch (e) {
       console.error('Failed to parse policy config', e)
       policyConfig.value = null
@@ -113,6 +130,9 @@ function removeRule(index: number) {
 
 function addExemption() {
   if (!editConfig.value) return
+  if (!editConfig.value.settings.exemptions) {
+    editConfig.value.settings.exemptions = []
+  }
   editConfig.value.settings.exemptions.push({
     dependency: '',
     reason: '',
@@ -122,7 +142,7 @@ function addExemption() {
 }
 
 function removeExemption(index: number) {
-  if (!editConfig.value) return
+  if (!editConfig.value || !editConfig.value.settings.exemptions) return
   editConfig.value.settings.exemptions.splice(index, 1)
 }
 
@@ -154,7 +174,7 @@ function resetEdit() {
   if (policyConfig.value) {
     editName.value = policyConfig.value.name || policy.value?.name || ''
     editDescription.value = policyConfig.value.description || ''
-    editConfig.value = JSON.parse(JSON.stringify(policyConfig.value))
+    editConfig.value = normalizeConfig(JSON.parse(JSON.stringify(policyConfig.value)))
   }
 }
 
@@ -408,7 +428,7 @@ onMounted(fetchPolicy)
               </div>
             </div>
 
-            <div class="section">
+            <div class="section" v-if="editConfig.settings.failOn && editConfig.settings.aiSuggestions">
               <h3>Settings</h3>
               <div class="settings-form">
                 <div class="setting-row">
@@ -430,21 +450,21 @@ onMounted(fetchPolicy)
               </div>
             </div>
 
-            <div class="section">
+            <div class="section" v-if="editConfig.settings.exemptions">
               <div class="section-header">
                 <h3>Exemptions</h3>
                 <Button label="Add Exemption" icon="pi pi-plus" size="small" @click="addExemption" />
               </div>
-              <div v-for="(_exemption, index) in editConfig.settings.exemptions" :key="index" class="exemption-item">
+              <div v-for="(exemption, index) in editConfig.settings.exemptions" :key="index" class="exemption-item">
                 <div class="exemption-fields">
-                  <InputText v-model="editConfig.settings.exemptions[index].dependency" placeholder="Dependency pattern (e.g., npm::package:* )" class="w-full mb-2" />
-                  <InputText v-model="editConfig.settings.exemptions[index].reason" placeholder="Reason for exemption" class="w-full mb-2" />
-                  <InputText v-model="editConfig.settings.exemptions[index].approvedBy" placeholder="Approved by" class="w-full mb-2" />
-                  <InputText v-model="editConfig.settings.exemptions[index].approvedDate" placeholder="Approval date" class="w-full" />
+                  <InputText v-model="exemption.dependency" placeholder="Dependency pattern (e.g., npm::package:* )" class="w-full mb-2" />
+                  <InputText v-model="exemption.reason" placeholder="Reason for exemption" class="w-full mb-2" />
+                  <InputText v-model="exemption.approvedBy" placeholder="Approved by" class="w-full mb-2" />
+                  <InputText v-model="exemption.approvedDate" placeholder="Approval date" class="w-full" />
                 </div>
                 <Button icon="pi pi-trash" severity="danger" text size="small" @click="removeExemption(index)" />
               </div>
-              <div v-if="!editConfig.settings.exemptions?.length" class="no-items">
+              <div v-if="!editConfig.settings.exemptions.length" class="no-items">
                 No exemptions. Click "Add Exemption" to add one.
               </div>
             </div>

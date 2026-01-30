@@ -41,10 +41,13 @@ fun Application.module() {
     val curatedScanRepository = CuratedScanRepository()
     val curationTemplateRepository = CurationTemplateRepository()
 
+    // Initialize graph service first (needed by other services)
+    val licenseGraphService = LicenseGraphService()
+
     // Initialize services
     val projectService = ProjectService(projectRepository)
     val scanService = ScanService(scanRepository, projectRepository)
-    val policyService = PolicyService(policyRepository)
+    val policyService = PolicyService(policyRepository, licenseGraphService)
     val authService = AuthService(apiKeyRepository)
     val spdxService = SpdxService()
     val curationService = CurationService(
@@ -65,7 +68,6 @@ fun Application.module() {
         curationRepository = curationRepository,
         curationSessionRepository = curationSessionRepository
     )
-    val licenseGraphService = LicenseGraphService()
 
     // Configure routes
     configureRouting(

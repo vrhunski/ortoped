@@ -2,6 +2,8 @@ package com.ortoped.core.policy
 
 import com.ortoped.core.model.Dependency
 import com.ortoped.core.model.ScanResult
+import com.ortoped.core.policy.explanation.EnhancedViolation
+import com.ortoped.core.policy.explanation.ExplanationGenerator
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.time.Instant
 
@@ -11,7 +13,8 @@ private val logger = KotlinLogging.logger {}
  * Evaluates scan results against policy rules
  */
 class PolicyEvaluator(
-    private val config: PolicyConfig
+    private val config: PolicyConfig,
+    private val explanationGenerator: ExplanationGenerator? = null
 ) {
     private val classifier = LicenseClassifier(config)
 
@@ -79,6 +82,14 @@ class PolicyEvaluator(
 
         val passed = determinePassed(summary)
 
+        // Generate enhanced violations with explanations if generator is available
+        val enhancedViolations: List<EnhancedViolation>? = explanationGenerator?.let { generator ->
+            logger.info { "Generating enhanced explanations for ${violations.size} violations" }
+            violations.map { violation ->
+                generator.enhance(violation)
+            }
+        }
+
         return PolicyReport(
             projectName = scanResult.projectName,
             projectVersion = scanResult.projectVersion,
@@ -89,7 +100,8 @@ class PolicyEvaluator(
             violations = violations,
             exemptedDependencies = exempted,
             passed = passed,
-            aiEnhanced = scanResult.aiEnhanced
+            aiEnhanced = scanResult.aiEnhanced,
+            enhancedViolations = enhancedViolations
         )
     }
 

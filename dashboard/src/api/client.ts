@@ -40,7 +40,7 @@ export interface Project {
 
 // Policy Configuration Types
 export interface PolicyRule {
-  id: string
+  id?: string
   name: string
   description?: string
   severity: 'ERROR' | 'WARNING' | 'INFO'
@@ -48,8 +48,8 @@ export interface PolicyRule {
   category?: string
   allowlist?: string[]
   denylist?: string[]
-  scopes: string[]
-  action: 'ALLOW' | 'DENY' | 'REVIEW'
+  scopes?: string[]
+  action: 'ALLOW' | 'DENY' | 'REVIEW' | 'WARN'
   message?: string
 }
 
@@ -77,18 +77,27 @@ export interface Exemption {
 }
 
 export interface PolicySettings {
-  aiSuggestions: AiSuggestionSettings
-  failOn: FailOnSettings
-  exemptions: Exemption[]
+  aiSuggestions?: AiSuggestionSettings
+  failOn?: FailOnSettings
+  exemptions?: Exemption[]
+  // Legacy/simplified settings used by PolicyEditor
+  failOnError?: boolean
+  failOnWarning?: boolean
+  acceptAiSuggestions?: boolean
+  minimumConfidence?: string
 }
 
 export interface PolicyConfig {
   version: string
   name: string
   description?: string
-  categories: Record<string, LicenseCategoryDefinition>
+  categories?: Record<string, LicenseCategoryDefinition>
   rules: PolicyRule[]
   settings: PolicySettings
+  // Legacy/simplified properties used by PolicyEditor
+  allowedLicenses?: string[]
+  deniedLicenses?: string[]
+  exemptions?: string[]
 }
 
 export interface PolicyViolation {
@@ -100,6 +109,70 @@ export interface PolicyViolation {
   suggestion?: string
 }
 
+// Enhanced violation types for "Why Not?" explanations
+export type ExplanationType =
+  'WHY_PROHIBITED' | 'COPYLEFT_RISK' | 'COMPATIBILITY_ISSUE' |
+  'OBLIGATION_CONCERN' | 'RISK_LEVEL' | 'PROPAGATION_RISK' | 'USE_CASE_MISMATCH'
+
+export type ResolutionType =
+  'REPLACE_DEPENDENCY' | 'ISOLATE_SERVICE' | 'ACCEPT_OBLIGATIONS' |
+  'REQUEST_EXCEPTION' | 'REMOVE_DEPENDENCY' | 'CONTACT_AUTHOR' |
+  'USE_ALTERNATIVE_VERSION' | 'CHANGE_SCOPE'
+
+export type EffortLevel = 'TRIVIAL' | 'LOW' | 'MEDIUM' | 'HIGH' | 'SIGNIFICANT'
+
+export interface ExplanationContext {
+  licenseCategory?: string
+  copyleftStrength?: string
+  propagationLevel?: number
+  riskLevel?: number
+  relatedLicenses?: string[]
+  triggeredObligations?: string[]
+  affectedUseCases?: string[]
+}
+
+export interface ViolationExplanation {
+  type: ExplanationType
+  title: string
+  summary: string
+  details: string[]
+  context?: ExplanationContext
+}
+
+export interface AlternativeDependency {
+  name: string
+  version?: string
+  license: string
+  reason: string
+  popularity?: 'VERY_HIGH' | 'HIGH' | 'MEDIUM' | 'LOW' | 'VERY_LOW'
+}
+
+export interface ResolutionOption {
+  type: ResolutionType
+  title: string
+  description: string
+  effort: EffortLevel
+  tradeoffs?: string[]
+  steps?: string[]
+  alternatives?: AlternativeDependency[]
+  recommended?: boolean
+}
+
+export interface EnhancedViolation {
+  ruleId: string
+  ruleName: string
+  severity: string
+  dependencyId: string
+  dependencyName: string
+  dependencyVersion: string
+  license: string
+  licenseCategory?: string
+  scope: string
+  message: string
+  explanations: ViolationExplanation[]
+  resolutions: ResolutionOption[]
+}
+
 export interface PolicyReport {
   policyId: string
   policyName: string
@@ -109,6 +182,7 @@ export interface PolicyReport {
   warningCount: number
   infoCount: number
   violations: PolicyViolation[]
+  enhancedViolations?: EnhancedViolation[]
   evaluatedAt: string
 }
 
@@ -371,6 +445,7 @@ export const api = {
   triggerScan: (data: {
     projectId: string
     enableAi?: boolean
+    enableSpdx?: boolean
     enableSourceScan?: boolean
     parallelAiCalls?: boolean
     demoMode?: boolean

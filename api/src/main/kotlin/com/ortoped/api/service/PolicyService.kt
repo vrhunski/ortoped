@@ -9,6 +9,7 @@ import com.ortoped.core.model.ScanResult
 import com.ortoped.core.policy.PolicyConfig
 import com.ortoped.core.policy.PolicyEvaluator
 import com.ortoped.core.policy.PolicyReport
+import com.ortoped.core.policy.explanation.ExplanationGenerator
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -17,7 +18,8 @@ import java.util.UUID
 private val logger = KotlinLogging.logger {}
 
 class PolicyService(
-    private val policyRepository: PolicyRepository
+    private val policyRepository: PolicyRepository,
+    private val licenseGraphService: LicenseGraphService? = null
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -131,9 +133,12 @@ class PolicyService(
 
         val policyConfig = json.decodeFromString<PolicyConfig>(normalizedPolicyConfig)
 
-        // Evaluate
+        // Evaluate with optional explanation generation
         logger.info { "Evaluating policy '${policy.name}' against scan $scanId" }
-        val evaluator = PolicyEvaluator(policyConfig)
+        val explanationGenerator = licenseGraphService?.let { graphService ->
+            ExplanationGenerator(graphService.getGraph())
+        }
+        val evaluator = PolicyEvaluator(policyConfig, explanationGenerator)
         val report = evaluator.evaluate(scanResult)
 
         // Store evaluation

@@ -80,30 +80,34 @@ function removeRule(index: number) {
 function addLicense(list: 'allowedLicenses' | 'deniedLicenses', license: string) {
   if (!license.trim()) return
   const newConfig = { ...config.value }
-  if (!newConfig[list].includes(license)) {
-    newConfig[list] = [...newConfig[list], license]
+  const currentList = newConfig[list] || []
+  if (!currentList.includes(license)) {
+    newConfig[list] = [...currentList, license]
     emit('update:modelValue', newConfig)
   }
 }
 
 function removeLicense(list: 'allowedLicenses' | 'deniedLicenses', index: number) {
   const newConfig = { ...config.value }
-  newConfig[list] = newConfig[list].filter((_, i) => i !== index)
+  const currentList = newConfig[list] || []
+  newConfig[list] = currentList.filter((_: string, i: number) => i !== index)
   emit('update:modelValue', newConfig)
 }
 
 function addExemption(exemption: string) {
   if (!exemption.trim()) return
   const newConfig = { ...config.value }
-  if (!newConfig.exemptions.includes(exemption)) {
-    newConfig.exemptions = [...newConfig.exemptions, exemption]
+  const currentExemptions = newConfig.exemptions || []
+  if (!currentExemptions.includes(exemption)) {
+    newConfig.exemptions = [...currentExemptions, exemption]
     emit('update:modelValue', newConfig)
   }
 }
 
 function removeExemption(index: number) {
   const newConfig = { ...config.value }
-  newConfig.exemptions = newConfig.exemptions.filter((_, i) => i !== index)
+  const currentExemptions = newConfig.exemptions || []
+  newConfig.exemptions = currentExemptions.filter((_: string, i: number) => i !== index)
   emit('update:modelValue', newConfig)
 }
 

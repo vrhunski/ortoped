@@ -42,6 +42,13 @@ class LicenseGraphService {
      */
     fun isInitialized(): Boolean = initialized
 
+    /**
+     * Get direct access to the underlying graph.
+     * Use this when you need to pass the graph to other services like ExplanationGenerator.
+     * Note: ensureInitialized() should be called first if you need populated data.
+     */
+    fun getGraph(): LicenseKnowledgeGraph = graph
+
     // =========================================================================
     // License Queries
     // =========================================================================

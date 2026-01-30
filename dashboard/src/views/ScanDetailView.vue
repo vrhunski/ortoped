@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
-import { api, type Scan, type Dependency, type Policy, type PolicyReport, type SpdxLicenseDetailResponse, type ReportSummary, type CurationSession } from '@/api/client'
+import { api, type Scan, type Dependency, type Policy, type PolicyReport, type SpdxLicenseDetailResponse, type ReportSummary, type CurationSession, type EnhancedViolation } from '@/api/client'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Button from 'primevue/button'
@@ -35,6 +35,49 @@ const licenseError = ref<string | null>(null)
 const reportSummary = ref<ReportSummary | null>(null)
 const curationSession = ref<CurationSession | null>(null)
 const downloadingReport = ref(false)
+
+// Enhanced violations state
+const expandedViolations = ref<Set<number>>(new Set())
+
+function toggleViolationExpand(index: number) {
+  if (expandedViolations.value.has(index)) {
+    expandedViolations.value.delete(index)
+  } else {
+    expandedViolations.value.add(index)
+  }
+  // Force reactivity
+  expandedViolations.value = new Set(expandedViolations.value)
+}
+
+function getEnhancedViolation(dependency: string): EnhancedViolation | undefined {
+  return policyReport.value?.enhancedViolations?.find(
+    ev => ev.dependencyName === dependency
+  )
+}
+
+function getExplanationIcon(type: string): string {
+  const icons: Record<string, string> = {
+    'WHY_PROHIBITED': 'pi-ban',
+    'COPYLEFT_RISK': 'pi-shield',
+    'COMPATIBILITY_ISSUE': 'pi-link',
+    'OBLIGATION_CONCERN': 'pi-file',
+    'RISK_LEVEL': 'pi-chart-line',
+    'PROPAGATION_RISK': 'pi-sitemap',
+    'USE_CASE_MISMATCH': 'pi-crosshairs'
+  }
+  return icons[type] || 'pi-info-circle'
+}
+
+function getEffortColor(effort: string): string {
+  const colors: Record<string, string> = {
+    'TRIVIAL': 'success',
+    'LOW': 'success',
+    'MEDIUM': 'warning',
+    'HIGH': 'danger',
+    'SIGNIFICANT': 'danger'
+  }
+  return colors[effort] || 'info'
+}
 
 const filteredDependencies = computed(() => {
   let deps = [...dependencies.value]
@@ -151,6 +194,7 @@ async function runPolicyCheck() {
         license: v.license as string,
         suggestion: v.aiSuggestion as string | undefined
       })) || [],
+      enhancedViolations: reportData.enhancedViolations as EnhancedViolation[] | undefined,
       evaluatedAt: rawData.createdAt
     }
 
@@ -298,7 +342,7 @@ async function fetchLicenseDetails(licenseId: string) {
   }
 }
 
-function onLicenseHover(event: MouseEvent, licenseId: string | undefined) {
+function onLicenseHover(event: MouseEvent | FocusEvent | KeyboardEvent, licenseId: string | undefined) {
   if (!licenseId) return
 
   // Clear any pending hide timeout
@@ -317,8 +361,9 @@ function onLicenseHover(event: MouseEvent, licenseId: string | undefined) {
       const rect = popup.getBoundingClientRect()
       const viewportWidth = window.innerWidth
       const viewportHeight = window.innerHeight
-      const mouseX = event.clientX
-      const mouseY = event.clientY
+      // Handle different event types - MouseEvent has clientX/Y, others don't
+      const mouseX = 'clientX' in event ? event.clientX : viewportWidth / 2
+      const mouseY = 'clientY' in event ? event.clientY : viewportHeight / 2
 
       let left = mouseX + 15
       let top = mouseY + 15
@@ -531,51 +576,125 @@ onMounted(fetchData)
         <div v-if="policyReport && policyReport.violations.length > 0" class="section violations-section">
           <div class="section-header">
             <h2><i class="pi pi-exclamation-triangle"></i> Violations ({{ policyReport.violations.length }})</h2>
+            <span v-if="policyReport.enhancedViolations" class="enhanced-badge">
+              <i class="pi pi-sparkles"></i> Enhanced Explanations
+            </span>
           </div>
 
-          <DataTable
-            :value="policyReport.violations"
-            stripedRows
-            showGridlines
-            class="p-datatable-sm"
-            :paginator="policyReport.violations.length > 10"
-            :rows="10"
-          >
-            <Column field="severity" header="Severity" style="width: 100px" sortable>
-              <template #body="{ data }">
-                <Badge :value="data.severity" :severity="getSeverityColor(data.severity)" />
-              </template>
-            </Column>
+          <div class="violations-list">
+            <div
+              v-for="(violation, index) in policyReport.violations"
+              :key="index"
+              class="violation-card"
+              :class="{ expanded: expandedViolations.has(index) }"
+            >
+              <!-- Violation Header -->
+              <div class="violation-header" @click="toggleViolationExpand(index)">
+                <div class="violation-main">
+                  <Badge :value="violation.severity" :severity="getSeverityColor(violation.severity)" />
+                  <code class="dependency-name">{{ violation.dependency }}</code>
+                  <span class="license-badge">{{ violation.license || 'Unknown' }}</span>
+                  <span class="rule-name">{{ violation.rule }}</span>
+                </div>
+                <div class="violation-expand">
+                  <i :class="expandedViolations.has(index) ? 'pi pi-chevron-up' : 'pi pi-chevron-down'"></i>
+                </div>
+              </div>
 
-            <Column field="dependency" header="Dependency" style="min-width: 200px" sortable>
-              <template #body="{ data }">
-                <code class="dependency-name">{{ data.dependency }}</code>
-              </template>
-            </Column>
+              <!-- Violation Message -->
+              <div class="violation-message">
+                {{ violation.message }}
+              </div>
 
-            <Column field="license" header="License" style="width: 150px" sortable>
-              <template #body="{ data }">
-                <span class="license-badge">{{ data.license || 'Unknown' }}</span>
-              </template>
-            </Column>
+              <!-- Enhanced Explanations (Expandable) -->
+              <div v-if="expandedViolations.has(index)" class="violation-details">
+                <template v-if="getEnhancedViolation(violation.dependency)">
+                  <!-- Explanations Section -->
+                  <div class="explanations-section">
+                    <h4><i class="pi pi-question-circle"></i> Why This Is a Problem</h4>
+                    <div
+                      v-for="(explanation, expIdx) in getEnhancedViolation(violation.dependency)?.explanations"
+                      :key="expIdx"
+                      class="explanation-card"
+                    >
+                      <div class="explanation-header">
+                        <i :class="'pi ' + getExplanationIcon(explanation.type)"></i>
+                        <strong>{{ explanation.title }}</strong>
+                      </div>
+                      <p class="explanation-summary">{{ explanation.summary }}</p>
+                      <ul class="explanation-details">
+                        <li v-for="(detail, detIdx) in explanation.details" :key="detIdx">
+                          {{ detail }}
+                        </li>
+                      </ul>
+                      <div v-if="explanation.context" class="explanation-context">
+                        <span v-if="explanation.context.copyleftStrength" class="context-tag">
+                          Copyleft: {{ explanation.context.copyleftStrength }}
+                        </span>
+                        <span v-if="explanation.context.riskLevel" class="context-tag">
+                          Risk: {{ explanation.context.riskLevel }}/6
+                        </span>
+                        <span v-if="explanation.context.licenseCategory" class="context-tag">
+                          {{ explanation.context.licenseCategory }}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
 
-            <Column field="rule" header="Rule" style="width: 150px" sortable>
-              <template #body="{ data }">
-                <span class="rule-name">{{ data.rule }}</span>
-              </template>
-            </Column>
+                  <!-- Resolutions Section -->
+                  <div class="resolutions-section">
+                    <h4><i class="pi pi-wrench"></i> How to Fix</h4>
+                    <div
+                      v-for="(resolution, resIdx) in getEnhancedViolation(violation.dependency)?.resolutions"
+                      :key="resIdx"
+                      class="resolution-card"
+                      :class="{ recommended: resolution.recommended }"
+                    >
+                      <div class="resolution-header">
+                        <strong>{{ resolution.title }}</strong>
+                        <Badge v-if="resolution.recommended" value="Recommended" severity="success" />
+                        <Badge :value="resolution.effort" :severity="getEffortColor(resolution.effort)" />
+                      </div>
+                      <p class="resolution-description">{{ resolution.description }}</p>
 
-            <Column field="message" header="Message" style="min-width: 250px">
-              <template #body="{ data }">
-                <div class="violation-message">
-                  {{ data.message }}
-                  <div v-if="data.suggestion" class="suggestion">
-                    <i class="pi pi-lightbulb"></i> {{ data.suggestion }}
+                      <div v-if="resolution.steps && resolution.steps.length > 0" class="resolution-steps">
+                        <strong>Steps:</strong>
+                        <ol>
+                          <li v-for="(step, stepIdx) in resolution.steps" :key="stepIdx">{{ step }}</li>
+                        </ol>
+                      </div>
+
+                      <div v-if="resolution.tradeoffs && resolution.tradeoffs.length > 0" class="resolution-tradeoffs">
+                        <strong>Tradeoffs:</strong>
+                        <ul>
+                          <li v-for="(tradeoff, toIdx) in resolution.tradeoffs" :key="toIdx">{{ tradeoff }}</li>
+                        </ul>
+                      </div>
+
+                      <div v-if="resolution.alternatives && resolution.alternatives.length > 0" class="resolution-alternatives">
+                        <strong>Alternatives:</strong>
+                        <div class="alternatives-list">
+                          <div v-for="(alt, altIdx) in resolution.alternatives" :key="altIdx" class="alternative-item">
+                            <code>{{ alt.name }}</code>
+                            <span class="alt-license">{{ alt.license }}</span>
+                            <span class="alt-reason">{{ alt.reason }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Fallback if no enhanced data -->
+                <div v-else class="no-enhanced-data">
+                  <p><i class="pi pi-info-circle"></i> Enhanced explanations are not available for this violation.</p>
+                  <div v-if="violation.suggestion" class="suggestion">
+                    <i class="pi pi-lightbulb"></i> {{ violation.suggestion }}
                   </div>
                 </div>
-              </template>
-            </Column>
-          </DataTable>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Dependencies Section -->
@@ -911,6 +1030,255 @@ onMounted(fetchData)
 .suggestion i {
   color: #f59e0b;
   margin-right: 0.25rem;
+}
+
+/* Enhanced Violations */
+.enhanced-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: #8b5cf6;
+  background: #ede9fe;
+  padding: 0.25rem 0.5rem;
+  border-radius: 1rem;
+}
+
+.violations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.violation-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  transition: box-shadow 0.2s;
+}
+
+.violation-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.violation-card.expanded {
+  border-color: #6366f1;
+}
+
+.violation-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: #f8fafc;
+  cursor: pointer;
+  user-select: none;
+}
+
+.violation-header:hover {
+  background: #f1f5f9;
+}
+
+.violation-main {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.violation-expand i {
+  color: #64748b;
+  transition: transform 0.2s;
+}
+
+.violation-card.expanded .violation-expand i {
+  transform: rotate(180deg);
+}
+
+.violation-card .violation-message {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.violation-details {
+  padding: 1rem;
+  background: #fafafa;
+}
+
+/* Explanations Section */
+.explanations-section,
+.resolutions-section {
+  margin-bottom: 1.5rem;
+}
+
+.explanations-section h4,
+.resolutions-section h4 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem 0;
+  font-size: 1rem;
+  color: #1e293b;
+}
+
+.explanations-section h4 i {
+  color: #f59e0b;
+}
+
+.resolutions-section h4 i {
+  color: #10b981;
+}
+
+.explanation-card {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-left: 4px solid #f59e0b;
+  border-radius: 0.375rem;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.explanation-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.explanation-header i {
+  color: #6366f1;
+}
+
+.explanation-summary {
+  margin: 0 0 0.75rem 0;
+  color: #374151;
+  font-size: 0.9rem;
+}
+
+.explanation-details {
+  margin: 0;
+  padding-left: 1.25rem;
+  font-size: 0.85rem;
+  color: #4b5563;
+}
+
+.explanation-details li {
+  margin-bottom: 0.25rem;
+}
+
+.explanation-context {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.context-tag {
+  font-size: 0.75rem;
+  background: #e0e7ff;
+  color: #4338ca;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.25rem;
+}
+
+/* Resolution Cards */
+.resolution-card {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-left: 4px solid #10b981;
+  border-radius: 0.375rem;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.resolution-card.recommended {
+  border-left-color: #22c55e;
+  background: #f0fdf4;
+}
+
+.resolution-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.resolution-description {
+  margin: 0 0 0.75rem 0;
+  color: #374151;
+  font-size: 0.9rem;
+}
+
+.resolution-steps,
+.resolution-tradeoffs,
+.resolution-alternatives {
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.resolution-steps strong,
+.resolution-tradeoffs strong,
+.resolution-alternatives strong {
+  color: #374151;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.resolution-steps ol,
+.resolution-tradeoffs ul {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: #4b5563;
+}
+
+.resolution-steps li,
+.resolution-tradeoffs li {
+  margin-bottom: 0.25rem;
+}
+
+.alternatives-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.alternative-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  background: #f8fafc;
+  border-radius: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.alternative-item code {
+  font-weight: 600;
+}
+
+.alt-license {
+  font-size: 0.75rem;
+  background: #dcfce7;
+  color: #166534;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+}
+
+.alt-reason {
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+
+.no-enhanced-data {
+  text-align: center;
+  padding: 1rem;
+  color: #6b7280;
+}
+
+.no-enhanced-data i {
+  margin-right: 0.5rem;
+  color: #9ca3af;
 }
 
 /* Dependencies Section */
