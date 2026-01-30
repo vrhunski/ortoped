@@ -47,7 +47,10 @@ data class TriggerScanRequest(
     val disabledPackageManagers: List<String> = emptyList(),
     val branch: String? = null,
     val tag: String? = null,
-    val commit: String? = null
+    val commit: String? = null,
+    // Analyzer Configuration
+    val allowDynamicVersions: Boolean = true,
+    val skipExcluded: Boolean = true
 )
 
 @Serializable
@@ -115,6 +118,42 @@ data class DependencyListResponse(
     val total: Int,
     val page: Int,
     val pageSize: Int
+)
+
+// =====================
+// Package Manager Models
+// =====================
+
+@Serializable
+data class PackageManagerInfo(
+    val name: String,
+    val displayName: String,
+    val description: String,
+    val filePatterns: List<String>,
+    val category: String
+)
+
+@Serializable
+data class PackageManagerListResponse(
+    val packageManagers: List<PackageManagerInfo>,
+    val categories: List<String>
+)
+
+// =====================
+// ORT Config Export Models
+// =====================
+
+@Serializable
+data class OrtConfigExport(
+    val configYml: String,
+    val filename: String = "ort-config.yml"
+)
+
+@Serializable
+data class AnalyzerConfigResponse(
+    val allowDynamicVersions: Boolean,
+    val skipExcluded: Boolean,
+    val disabledPackageManagers: List<String>
 )
 
 // =====================

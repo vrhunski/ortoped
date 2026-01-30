@@ -1,5 +1,6 @@
 package com.ortoped.api.routes
 
+import com.ortoped.api.model.AnalyzerConfigResponse
 import com.ortoped.api.model.GenerateSbomRequest
 import com.ortoped.api.model.SbomResponse
 import com.ortoped.api.model.TriggerScanRequest
@@ -24,6 +25,23 @@ fun Route.scanRoutes(scanService: ScanService) {
             val pageSize = call.request.queryParameters["pageSize"]?.toIntOrNull() ?: 20
 
             val response = scanService.listScans(projectId, status, page, pageSize.coerceAtMost(100))
+            call.respond(HttpStatusCode.OK, response)
+        }
+
+        // Get available package managers
+        get("/package-managers") {
+            val response = scanService.getAvailablePackageManagers()
+            call.respond(HttpStatusCode.OK, response)
+        }
+
+        // Generate ORT config.yml for download
+        post("/ort-config") {
+            val request = call.receive<AnalyzerConfigResponse>()
+            val response = scanService.generateOrtConfig(
+                allowDynamicVersions = request.allowDynamicVersions,
+                skipExcluded = request.skipExcluded,
+                disabledPackageManagers = request.disabledPackageManagers
+            )
             call.respond(HttpStatusCode.OK, response)
         }
 

@@ -28,12 +28,16 @@ class ScanOrchestrator(
         enableSourceScan: Boolean = false,
         parallelAiCalls: Boolean = true,
         demoMode: Boolean = false,
-        disabledPackageManagers: List<String> = emptyList()
+        disabledPackageManagers: List<String> = emptyList(),
+        allowDynamicVersions: Boolean = true,
+        skipExcluded: Boolean = true
     ): ScanResult {
         logger.info { "Starting orchestrated scan for: ${projectDir.absolutePath}" }
         logger.info { "Source code scanning: $enableSourceScan" }
         logger.info { "AI enhancement: $enableAiResolution" }
         logger.info { "SPDX enhancement: $enableSpdx" }
+        logger.info { "Allow dynamic versions: $allowDynamicVersions" }
+        logger.info { "Skip excluded: $skipExcluded" }
 
         // Step 1/4: Run analyzer scan
         logger.info { "Step 1/4: Running analyzer..." }
@@ -44,7 +48,9 @@ class ScanOrchestrator(
             projectDir = projectDir,
             demoMode = demoMode,
             enableSourceScan = enableSourceScan && scannerConfig.enabled,
-            disabledPackageManagers = disabledPackageManagers
+            disabledPackageManagers = disabledPackageManagers,
+            allowDynamicVersions = allowDynamicVersions,
+            skipExcluded = skipExcluded
         )
 
         if (scanResult.sourceCodeScanned) {

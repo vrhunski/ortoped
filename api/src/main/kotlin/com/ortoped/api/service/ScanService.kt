@@ -34,14 +34,6 @@ class ScanService(
         prettyPrint = false
     }
 
-    private fun getDefaultDisabledPackageManagers(): List<String> {
-        return System.getenv("DISABLED_PACKAGE_MANAGERS")
-            ?.split(",")
-            ?.map { it.trim().lowercase() }
-            ?.filter { it.isNotBlank() }
-            ?: listOf("bower", "npm", "yarn") // Default fallback - disable problematic package managers
-    }
-
     // In-memory job tracking for active scans
     private val activeJobs = ConcurrentHashMap<UUID, Job>()
 
@@ -236,10 +228,6 @@ class ScanService(
                     spdxClient = SpdxLicenseClient()
                 )
 
-                // Merge request disabled package managers with defaults
-                val defaultDisabled = getDefaultDisabledPackageManagers()
-                val allDisabledPackageManagers = (request.disabledPackageManagers + defaultDisabled).distinct()
-
                 // Run scan
                 val scanResult = orchestrator.scanWithAiEnhancement(
                     projectDir = projectDir,
@@ -248,7 +236,9 @@ class ScanService(
                     enableSourceScan = request.enableSourceScan,
                     parallelAiCalls = request.parallelAiCalls,
                     demoMode = request.demoMode,
-                    disabledPackageManagers = allDisabledPackageManagers
+                    disabledPackageManagers = request.disabledPackageManagers,
+                    allowDynamicVersions = request.allowDynamicVersions,
+                    skipExcluded = request.skipExcluded
                 )
 
                 // Store result
@@ -303,6 +293,86 @@ class ScanService(
         } else {
             throw BadRequestException("Scan is not active or already completed")
         }
+    }
+
+    /**
+     * Get list of available package managers supported by ORT
+     */
+    fun getAvailablePackageManagers(): PackageManagerListResponse {
+        val packageManagers = listOf(
+            // JVM
+            PackageManagerInfo("Maven", "Maven", "Java/Kotlin dependency management via pom.xml", listOf("pom.xml"), "JVM"),
+            PackageManagerInfo("Gradle", "Gradle", "Build automation for JVM projects", listOf("build.gradle", "build.gradle.kts"), "JVM"),
+            PackageManagerInfo("SBT", "SBT", "Scala build tool", listOf("build.sbt"), "JVM"),
+
+            // JavaScript
+            PackageManagerInfo("NPM", "NPM", "Node.js package manager", listOf("package.json", "package-lock.json"), "JavaScript"),
+            PackageManagerInfo("Yarn", "Yarn", "Fast, reliable JavaScript package manager", listOf("yarn.lock"), "JavaScript"),
+            PackageManagerInfo("PNPM", "PNPM", "Fast, disk-efficient package manager", listOf("pnpm-lock.yaml"), "JavaScript"),
+            PackageManagerInfo("Bower", "Bower", "Frontend package manager (deprecated)", listOf("bower.json"), "JavaScript"),
+
+            // Python
+            PackageManagerInfo("Pip", "Pip", "Python package installer", listOf("requirements.txt", "setup.py"), "Python"),
+            PackageManagerInfo("Poetry", "Poetry", "Python dependency management and packaging", listOf("pyproject.toml", "poetry.lock"), "Python"),
+            PackageManagerInfo("Pipenv", "Pipenv", "Python packaging tool", listOf("Pipfile", "Pipfile.lock"), "Python"),
+
+            // Other Languages
+            PackageManagerInfo("Cargo", "Cargo", "Rust package manager", listOf("Cargo.toml", "Cargo.lock"), "Rust"),
+            PackageManagerInfo("GoMod", "Go Modules", "Go dependency management", listOf("go.mod", "go.sum"), "Go"),
+            PackageManagerInfo("NuGet", "NuGet", ".NET package manager", listOf("*.csproj", "packages.config"), ".NET"),
+            PackageManagerInfo("CocoaPods", "CocoaPods", "iOS/macOS dependency manager", listOf("Podfile", "Podfile.lock"), "iOS/macOS"),
+            PackageManagerInfo("SwiftPM", "Swift Package Manager", "Apple Swift packages", listOf("Package.swift"), "iOS/macOS"),
+            PackageManagerInfo("Composer", "Composer", "PHP dependency manager", listOf("composer.json", "composer.lock"), "PHP"),
+            PackageManagerInfo("Bundler", "Bundler", "Ruby dependency manager", listOf("Gemfile", "Gemfile.lock"), "Ruby"),
+            PackageManagerInfo("Pub", "Pub", "Dart/Flutter package manager", listOf("pubspec.yaml", "pubspec.lock"), "Dart"),
+            PackageManagerInfo("Conan", "Conan", "C/C++ package manager", listOf("conanfile.txt", "conanfile.py"), "C/C++")
+        )
+
+        val categories = packageManagers.map { it.category }.distinct().sorted()
+
+        return PackageManagerListResponse(
+            packageManagers = packageManagers,
+            categories = categories
+        )
+    }
+
+    /**
+     * Generate ORT config.yml for download based on scan settings
+     */
+    fun generateOrtConfig(
+        allowDynamicVersions: Boolean = true,
+        skipExcluded: Boolean = true,
+        disabledPackageManagers: List<String> = emptyList()
+    ): OrtConfigExport {
+        val configYml = buildString {
+            appendLine("# ORT Analyzer Configuration")
+            appendLine("# Generated by OrtoPed - https://github.com/ortoped")
+            appendLine("# Place this file in your ORT_CONFIG_DIR directory")
+            appendLine()
+            appendLine("ort:")
+            appendLine("  analyzer:")
+            appendLine("    allowDynamicVersions: $allowDynamicVersions")
+            appendLine("    skipExcluded: $skipExcluded")
+
+            if (disabledPackageManagers.isNotEmpty()) {
+                appendLine("    disabledPackageManagers:")
+                disabledPackageManagers.forEach { pm ->
+                    appendLine("      - $pm")
+                }
+            }
+
+            appendLine()
+            appendLine("# Usage:")
+            appendLine("# 1. Set ORT_CONFIG_DIR environment variable to the directory containing this file")
+            appendLine("# 2. Run: ort analyze -i <project-dir> -o <output-dir>")
+            appendLine("# Or with ortoped CLI:")
+            appendLine("# ortoped scan --project <project-dir>")
+        }
+
+        return OrtConfigExport(
+            configYml = configYml,
+            filename = "ort-config.yml"
+        )
     }
 
     private fun parseUUID(id: String): UUID = try {

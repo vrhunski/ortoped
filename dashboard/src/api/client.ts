@@ -406,6 +406,32 @@ export interface BulkValidationItem {
 
 export type LicenseValidationResponse = BulkValidationResponse
 
+// Package Manager Types
+export interface PackageManagerInfo {
+  name: string
+  displayName: string
+  description: string
+  filePatterns: string[]
+  category: string
+}
+
+export interface PackageManagerListResponse {
+  packageManagers: PackageManagerInfo[]
+  categories: string[]
+}
+
+// ORT Config Export Types
+export interface OrtConfigExport {
+  configYml: string
+  filename: string
+}
+
+export interface AnalyzerConfigRequest {
+  allowDynamicVersions: boolean
+  skipExcluded: boolean
+  disabledPackageManagers: string[]
+}
+
 // API Functions
 export const api = {
   // Health
@@ -450,7 +476,17 @@ export const api = {
     parallelAiCalls?: boolean
     demoMode?: boolean
     disabledPackageManagers?: string[]
+    allowDynamicVersions?: boolean
+    skipExcluded?: boolean
   }) => apiClient.post<Scan>('/scans', data),
+
+  // Package Managers
+  getPackageManagers: () =>
+    apiClient.get<PackageManagerListResponse>('/scans/package-managers'),
+
+  // ORT Config Export
+  generateOrtConfig: (config: AnalyzerConfigRequest) =>
+    apiClient.post<OrtConfigExport>('/scans/ort-config', config),
 
   generateSbom: (scanId: string, format = 'cyclonedx-json') =>
     apiClient.post(`/scans/${scanId}/sbom`, { format }),

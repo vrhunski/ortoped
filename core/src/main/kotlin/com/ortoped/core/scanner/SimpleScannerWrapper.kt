@@ -28,18 +28,27 @@ class SimpleScannerWrapper(
         projectDir: File,
         demoMode: Boolean = false,
         enableSourceScan: Boolean = true,
-        disabledPackageManagers: List<String> = emptyList()
+        disabledPackageManagers: List<String> = emptyList(),
+        allowDynamicVersions: Boolean = true,
+        skipExcluded: Boolean = true
     ): ScanResult {
         logger.info { "Starting scan for project: ${projectDir.absolutePath}" }
         logger.info { "Demo mode: $demoMode" }
         logger.info { "Source scan: $enableSourceScan" }
+        logger.info { "Allow dynamic versions: $allowDynamicVersions" }
+        logger.info { "Skip excluded: $skipExcluded" }
 
         if (demoMode) {
             logger.info { "Using demo data to showcase AI license resolution" }
             return DemoDataProvider.generateDemoScanResult()
         }
 
-        val (ortResult, baseResult) = performRealScan(projectDir, disabledPackageManagers)
+        val (ortResult, baseResult) = performRealScan(
+            projectDir,
+            disabledPackageManagers,
+            allowDynamicVersions,
+            skipExcluded
+        )
 
         // Enhance with source code scanner if enabled
         if (enableSourceScan) {
@@ -53,7 +62,12 @@ class SimpleScannerWrapper(
         return baseResult
     }
 
-    private fun performRealScan(projectDir: File, disabledPackageManagers: List<String> = emptyList()): Pair<org.ossreviewtoolkit.model.OrtResult?, ScanResult> {
+    private fun performRealScan(
+        projectDir: File,
+        disabledPackageManagers: List<String> = emptyList(),
+        allowDynamicVersions: Boolean = true,
+        skipExcluded: Boolean = true
+    ): Pair<org.ossreviewtoolkit.model.OrtResult?, ScanResult> {
         logger.info { "Starting real ORT scan..." }
 
         // Workaround for NPM cache permission issues
@@ -62,10 +76,10 @@ class SimpleScannerWrapper(
         // Ensure lock files exist for NPM projects
         ensureNpmLockFiles(projectDir)
 
-        // Step 1: Configure the analyzer with sensible defaults to tolerate missing references
+        // Step 1: Configure the analyzer with user-specified settings
         val analyzerConfig = AnalyzerConfiguration(
-            allowDynamicVersions = true,  // Handle version ranges - tolerate unresolved versions
-            skipExcluded = true,          // Skip excluded dependencies - tolerate missing references
+            allowDynamicVersions = allowDynamicVersions,  // Handle version ranges - configurable
+            skipExcluded = skipExcluded,                  // Skip excluded dependencies - configurable
             disabledPackageManagers = disabledPackageManagers,
             packageManagers = mapOf(
                 "Npm" to PackageManagerConfiguration() // Explicitly configure Npm with default/empty settings

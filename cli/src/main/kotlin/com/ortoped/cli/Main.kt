@@ -33,13 +33,6 @@ class ScanCommand : CliktCommand(
     name = "scan",
     help = "Scan a project for dependencies and licenses"
 ) {
-    private fun getDefaultDisabledPackageManagers(): List<String> {
-        return System.getenv("DISABLED_PACKAGE_MANAGERS")
-            ?.split(",")
-            ?.map { it.trim().lowercase() }
-            ?.filter { it.isNotBlank() }
-            ?: listOf("bower", "npm", "yarn") // Default fallback - disable problematic package managers
-    }
     private val projectPath by option(
         "-p", "--project",
         help = "Project directory or Git repository URL to scan"
@@ -192,10 +185,6 @@ class ScanCommand : CliktCommand(
             )
             val reportGenerator = ReportGenerator()
 
-            // Merge CLI disabled package managers with defaults
-            val defaultDisabled = getDefaultDisabledPackageManagers()
-            val allDisabledPackageManagers = (disablePackageManagers + defaultDisabled).distinct()
-
             // Run scan with AI enhancement
             val scanResult = orchestrator.scanWithAiEnhancement(
                 projectDir = projectDir,
@@ -203,7 +192,7 @@ class ScanCommand : CliktCommand(
                 enableSourceScan = enableSourceScan,
                 parallelAiCalls = parallelAi,
                 demoMode = demoMode,
-                disabledPackageManagers = allDisabledPackageManagers
+                disabledPackageManagers = disablePackageManagers
             )
 
             // Generate reports

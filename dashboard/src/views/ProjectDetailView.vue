@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
-import { api, type Project, type ScanSummary } from '@/api/client'
+import { api, type Project, type ScanSummary, type PackageManagerInfo } from '@/api/client'
 import InputSwitch from 'primevue/inputswitch'
+import MultiSelect from 'primevue/multiselect'
 import { useToast } from 'primevue/usetoast'
 
 const toast = useToast()
@@ -12,6 +13,10 @@ const scans = ref<ScanSummary[]>([])
 const loading = ref(true)
 const scanning = ref(false)
 
+// Package managers list
+const packageManagers = ref<PackageManagerInfo[]>([])
+const showAdvancedConfig = ref(false)
+
 // Scan configuration with smart defaults
 const scanConfig = ref({
   enableAi: true,
@@ -20,7 +25,15 @@ const scanConfig = ref({
   parallelAiCalls: true
 })
 
+// Analyzer configuration with ORT defaults
+const analyzerConfig = ref({
+  allowDynamicVersions: true,
+  skipExcluded: true,
+  disabledPackageManagers: [] as string[]
+})
+
 const SCAN_CONFIG_KEY = 'ortoped.scanConfig'
+const ANALYZER_CONFIG_KEY = 'ortoped.analyzerConfig'
 
 // Polling state
 let pollInterval: number | null = null
@@ -46,6 +59,78 @@ function loadScanConfig() {
 // Save scan config to localStorage
 function saveScanConfig() {
   localStorage.setItem(SCAN_CONFIG_KEY, JSON.stringify(scanConfig.value))
+}
+
+// Load saved analyzer config from localStorage
+function loadAnalyzerConfig() {
+  const saved = localStorage.getItem(ANALYZER_CONFIG_KEY)
+  if (saved) {
+    try {
+      analyzerConfig.value = { ...analyzerConfig.value, ...JSON.parse(saved) }
+    } catch (e) {
+      console.warn('Failed to parse saved analyzer config')
+    }
+  }
+}
+
+// Save analyzer config to localStorage
+function saveAnalyzerConfig() {
+  localStorage.setItem(ANALYZER_CONFIG_KEY, JSON.stringify(analyzerConfig.value))
+}
+
+// Fetch available package managers
+async function fetchPackageManagers() {
+  try {
+    const res = await api.getPackageManagers()
+    packageManagers.value = res.data.packageManagers
+  } catch (e) {
+    console.error('Failed to fetch package managers', e)
+  }
+}
+
+// Group package managers by category for display
+const packageManagerOptions = computed(() => {
+  const groups: Record<string, PackageManagerInfo[]> = {}
+  packageManagers.value.forEach(pm => {
+    if (!groups[pm.category]) groups[pm.category] = []
+    groups[pm.category].push(pm)
+  })
+  return Object.entries(groups).map(([category, items]) => ({
+    label: category,
+    items: items
+  }))
+})
+
+// Download ORT config.yml
+async function downloadOrtConfig() {
+  try {
+    const res = await api.generateOrtConfig({
+      allowDynamicVersions: analyzerConfig.value.allowDynamicVersions,
+      skipExcluded: analyzerConfig.value.skipExcluded,
+      disabledPackageManagers: analyzerConfig.value.disabledPackageManagers
+    })
+    const blob = new Blob([res.data.configYml], { type: 'text/yaml' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = res.data.filename
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.add({
+      severity: 'success',
+      summary: 'Config Downloaded',
+      detail: 'ORT config.yml saved successfully',
+      life: 3000
+    })
+  } catch (e) {
+    console.error('Failed to download ORT config', e)
+    toast.add({
+      severity: 'error',
+      summary: 'Download Failed',
+      detail: 'Failed to download ORT config',
+      life: 5000
+    })
+  }
 }
 
 // Format duration from timestamps
@@ -122,6 +207,7 @@ async function triggerScan(demoMode = false) {
 
   // Save user preferences
   saveScanConfig()
+  saveAnalyzerConfig()
 
   try {
     if (demoMode) {
@@ -140,14 +226,18 @@ async function triggerScan(demoMode = false) {
         life: 3000
       })
     } else {
-      // Normal scan: use user config
+      // Normal scan: use user config including analyzer settings
       await api.triggerScan({
         projectId: project.value.id,
         enableAi: scanConfig.value.enableAi,
         enableSpdx: scanConfig.value.enableSpdx,
         enableSourceScan: scanConfig.value.enableSourceScan,
         parallelAiCalls: scanConfig.value.parallelAiCalls,
-        demoMode: false
+        demoMode: false,
+        // Analyzer configuration
+        allowDynamicVersions: analyzerConfig.value.allowDynamicVersions,
+        skipExcluded: analyzerConfig.value.skipExcluded,
+        disabledPackageManagers: analyzerConfig.value.disabledPackageManagers
       })
       const configSummary = [
         scanConfig.value.enableAi ? 'AI' : null,
@@ -196,6 +286,8 @@ watch(hasActiveScans, (hasActive) => {
 
 onMounted(() => {
   loadScanConfig()
+  loadAnalyzerConfig()
+  fetchPackageManagers()
   fetchData()
 })
 
@@ -286,6 +378,78 @@ onUnmounted(() => {
             <i class="pi pi-refresh" :class="{ 'pi-spin': scanning }"></i>
             {{ scanning ? 'Starting...' : 'Run Scan' }}
           </button>
+        </div>
+      </div>
+
+      <!-- Analyzer Configuration -->
+      <div class="section analyzer-config-section">
+        <div class="section-header clickable" @click="showAdvancedConfig = !showAdvancedConfig">
+          <h2>
+            <i :class="['pi', showAdvancedConfig ? 'pi-chevron-down' : 'pi-chevron-right']"></i>
+            Analyzer Configuration
+          </h2>
+          <span class="section-subtitle">Configure ORT analyzer behavior</span>
+        </div>
+
+        <div v-show="showAdvancedConfig" class="config-content">
+          <div class="scan-config-panel">
+            <div class="config-row">
+              <div class="config-info">
+                <span class="config-label">Allow Dynamic Versions</span>
+                <span class="config-description">
+                  Analyze projects with version ranges (^1.0.0) even without lockfiles
+                </span>
+              </div>
+              <InputSwitch v-model="analyzerConfig.allowDynamicVersions" />
+            </div>
+
+            <div class="config-row">
+              <div class="config-info">
+                <span class="config-label">Skip Excluded Dependencies</span>
+                <span class="config-description">
+                  Skip dependencies marked as excluded in .ort.yml configuration
+                </span>
+              </div>
+              <InputSwitch v-model="analyzerConfig.skipExcluded" />
+            </div>
+
+            <div class="config-row config-row-vertical">
+              <div class="config-info">
+                <span class="config-label">Disabled Package Managers</span>
+                <span class="config-description">
+                  Select package managers to exclude from analysis
+                </span>
+              </div>
+              <div class="package-manager-select">
+                <MultiSelect
+                  v-model="analyzerConfig.disabledPackageManagers"
+                  :options="packageManagerOptions"
+                  optionLabel="displayName"
+                  optionValue="name"
+                  optionGroupLabel="label"
+                  optionGroupChildren="items"
+                  placeholder="Select package managers to disable"
+                  display="chip"
+                  :filter="true"
+                  filterPlaceholder="Search..."
+                  class="w-full"
+                >
+                  <template #option="{ option }">
+                    <div class="pm-option">
+                      <span class="pm-name">{{ option.displayName }}</span>
+                      <span class="pm-patterns">{{ option.filePatterns.join(', ') }}</span>
+                    </div>
+                  </template>
+                </MultiSelect>
+              </div>
+            </div>
+          </div>
+
+          <div class="config-actions">
+            <button class="btn btn-outline" @click="downloadOrtConfig">
+              <i class="pi pi-download"></i> Download ORT Config
+            </button>
+          </div>
         </div>
       </div>
 
@@ -576,5 +740,89 @@ onUnmounted(() => {
   text-align: center;
   padding: 3rem;
   color: #64748b;
+}
+
+/* Analyzer Configuration Styles */
+.analyzer-config-section .section-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+.analyzer-config-section .section-header.clickable:hover {
+  opacity: 0.8;
+}
+
+.analyzer-config-section .section-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.analyzer-config-section .section-header h2 i {
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+.section-subtitle {
+  font-size: 0.875rem;
+  color: #64748b;
+  font-weight: normal;
+}
+
+.config-content {
+  margin-top: 1rem;
+}
+
+.config-row-vertical {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.package-manager-select {
+  width: 100%;
+}
+
+.package-manager-select :deep(.p-multiselect) {
+  width: 100%;
+}
+
+.pm-option {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.pm-name {
+  font-weight: 500;
+  color: #334155;
+}
+
+.pm-patterns {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+}
+
+.config-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.btn-outline {
+  background: transparent;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+}
+
+.btn-outline:hover {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.w-full {
+  width: 100%;
 }
 </style>
