@@ -34,15 +34,70 @@ const analyzerConfig = ref({
 
 const SCAN_CONFIG_KEY = 'ortoped.scanConfig'
 const ANALYZER_CONFIG_KEY = 'ortoped.analyzerConfig'
+const IGNORED_STALE_SCANS_KEY = 'ortoped.ignoredStaleScans'
 
 // Polling state
 let pollInterval: number | null = null
 const POLL_INTERVAL_MS = 3000
 
-// Check if any scan is in progress
-const hasActiveScans = computed(() =>
-  scans.value.some(s => s.status === 'pending' || s.status === 'scanning')
+// Stale scan detection configuration
+const STALE_SCAN_THRESHOLD_MS = 30 * 60 * 1000 // 30 minutes - scan considered potentially stuck
+const MAX_POLL_ATTEMPTS = 100 // Max polling attempts before stopping (~5 minutes at 3s interval)
+const pollAttempts = ref(0)
+const ignoredStaleScanIds = ref<Set<string>>(new Set())
+
+// Load ignored stale scans from localStorage
+function loadIgnoredStaleScans() {
+  const saved = localStorage.getItem(IGNORED_STALE_SCANS_KEY)
+  if (saved) {
+    try {
+      const ids = JSON.parse(saved) as string[]
+      ignoredStaleScanIds.value = new Set(ids)
+    } catch (e) {
+      console.warn('Failed to parse saved ignored stale scans')
+    }
+  }
+}
+
+// Save ignored stale scans to localStorage
+function saveIgnoredStaleScans() {
+  const ids = Array.from(ignoredStaleScanIds.value)
+  localStorage.setItem(IGNORED_STALE_SCANS_KEY, JSON.stringify(ids))
+}
+
+// Check if a scan is potentially stale/stuck
+function isScanStale(scan: ScanSummary): boolean {
+  if (scan.status !== 'pending' && scan.status !== 'scanning') return false
+  if (ignoredStaleScanIds.value.has(scan.id)) return false
+  
+  const startTime = scan.startedAt ? new Date(scan.startedAt).getTime() : null
+  if (!startTime) return false
+  
+  const elapsed = Date.now() - startTime
+  return elapsed > STALE_SCAN_THRESHOLD_MS
+}
+
+// Get stale scans
+const staleScans = computed(() =>
+  scans.value.filter(s => isScanStale(s))
 )
+
+// Check if any scan is in progress (excluding ignored stale scans)
+const hasActiveScans = computed(() =>
+  scans.value.some(s =>
+    (s.status === 'pending' || s.status === 'scanning') &&
+    !ignoredStaleScanIds.value.has(s.id)
+  )
+)
+
+// Check if all active scans are stale
+const allActiveScansAreStale = computed(() => {
+  const activeScans = scans.value.filter(s =>
+    (s.status === 'pending' || s.status === 'scanning') &&
+    !ignoredStaleScanIds.value.has(s.id)
+  )
+  return activeScans.length > 0 && activeScans.every(s => isScanStale(s))
+})
 
 // Load saved scan config from localStorage
 function loadScanConfig() {
@@ -184,12 +239,43 @@ async function refreshScans() {
 
 function startPolling() {
   if (pollInterval) return // Already polling
+  pollAttempts.value = 0
 
   pollInterval = window.setInterval(async () => {
+    pollAttempts.value++
+    
+    // Stop polling if max attempts reached
+    if (pollAttempts.value >= MAX_POLL_ATTEMPTS) {
+      console.warn('Max poll attempts reached, stopping polling')
+      toast.add({
+        severity: 'warn',
+        summary: 'Polling Stopped',
+        detail: 'Stopped polling after max attempts. Some scans may be stuck.',
+        life: 5000
+      })
+      stopPolling()
+      return
+    }
+    
+    // Stop polling if no active scans (excluding ignored stale ones)
     if (!hasActiveScans.value) {
       stopPolling()
       return
     }
+    
+    // Check if all remaining active scans are stale
+    if (allActiveScansAreStale.value) {
+      console.warn('All active scans appear stale, stopping polling')
+      toast.add({
+        severity: 'warn',
+        summary: 'Scans Appear Stuck',
+        detail: 'All active scans have been running for over 30 minutes and may be stuck.',
+        life: 8000
+      })
+      stopPolling()
+      return
+    }
+    
     await refreshScans()
   }, POLL_INTERVAL_MS)
 }
@@ -198,6 +284,34 @@ function stopPolling() {
   if (pollInterval) {
     clearInterval(pollInterval)
     pollInterval = null
+    pollAttempts.value = 0
+  }
+}
+
+// Ignore a stale scan from polling (stop watching it)
+function ignoreStaleScan(scanId: string) {
+  ignoredStaleScanIds.value.add(scanId)
+  saveIgnoredStaleScans() // Persist to localStorage
+  toast.add({
+    severity: 'info',
+    summary: 'Scan Ignored',
+    detail: 'This scan will no longer be actively tracked.',
+    life: 3000
+  })
+  
+  // If no more active scans to watch, stop polling
+  if (!hasActiveScans.value) {
+    stopPolling()
+  }
+}
+
+// Resume watching a previously ignored scan
+function resumeWatchingScan(scanId: string) {
+  ignoredStaleScanIds.value.delete(scanId)
+  saveIgnoredStaleScans() // Persist to localStorage
+  // Restart polling if we now have active scans
+  if (hasActiveScans.value && !pollInterval) {
+    startPolling()
   }
 }
 
@@ -266,13 +380,31 @@ async function triggerScan(demoMode = false) {
   }
 }
 
-function getStatusClass(status: string) {
+function getStatusClass(status: string, scan?: ScanSummary) {
+  // Check if scan is stale (stuck)
+  if (scan && isScanStale(scan)) {
+    return 'status-stale'
+  }
+  
   switch (status) {
     case 'complete': return 'status-success'
     case 'scanning': return 'status-warning'
     case 'failed': return 'status-error'
     default: return 'status-pending'
   }
+}
+
+// Get display status text (shows "stuck" for stale scans)
+function getStatusText(scan: ScanSummary): string {
+  if (isScanStale(scan)) {
+    return 'stuck'
+  }
+  return scan.status
+}
+
+// Check if scan is being ignored (user chose to stop watching)
+function isScanIgnored(scanId: string): boolean {
+  return ignoredStaleScanIds.value.has(scanId)
 }
 
 // Watch for active scans and manage polling
@@ -287,6 +419,7 @@ watch(hasActiveScans, (hasActive) => {
 onMounted(() => {
   loadScanConfig()
   loadAnalyzerConfig()
+  loadIgnoredStaleScans()
   fetchPackageManagers()
   fetchData()
 })
@@ -456,9 +589,28 @@ onUnmounted(() => {
       <div class="section">
         <div class="section-header">
           <h2>Scan History</h2>
-          <span v-if="hasActiveScans" class="scanning-indicator">
+          <span v-if="hasActiveScans && !allActiveScansAreStale" class="scanning-indicator">
             <i class="pi pi-spin pi-spinner"></i> Scanning...
           </span>
+          <span v-else-if="staleScans.length > 0" class="stale-indicator">
+            <i class="pi pi-exclamation-triangle"></i> {{ staleScans.length }} stuck scan{{ staleScans.length > 1 ? 's' : '' }}
+          </span>
+        </div>
+
+        <!-- Stale scans warning banner -->
+        <div v-if="staleScans.length > 0" class="stale-warning-banner">
+          <div class="banner-content">
+            <i class="pi pi-exclamation-triangle"></i>
+            <div class="banner-text">
+              <strong>Scans may be stuck</strong>
+              <p>{{ staleScans.length }} scan{{ staleScans.length > 1 ? 's are' : ' is' }} taking longer than expected (over 30 minutes). This may indicate a backend issue.</p>
+            </div>
+          </div>
+          <div class="banner-actions">
+            <button class="btn btn-outline btn-small" @click="refreshScans">
+              <i class="pi pi-refresh"></i> Refresh Status
+            </button>
+          </div>
         </div>
 
         <div v-if="scans.length === 0" class="empty-state">
@@ -476,16 +628,22 @@ onUnmounted(() => {
               <th>SPDX Resolved</th>
               <th>Duration</th>
               <th>Completed</th>
-              <th></th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="scan in scans" :key="scan.id">
+            <tr v-for="scan in scans" :key="scan.id" :class="{ 'stale-row': isScanStale(scan), 'ignored-row': isScanIgnored(scan.id) }">
               <td>
-                <span :class="['status-badge', getStatusClass(scan.status)]">
-                  <i v-if="scan.status === 'scanning'" class="pi pi-spin pi-spinner status-spinner"></i>
-                  {{ scan.status }}
-                </span>
+                <div class="status-cell">
+                  <span :class="['status-badge', getStatusClass(scan.status, scan)]">
+                    <i v-if="scan.status === 'scanning' && !isScanStale(scan)" class="pi pi-spin pi-spinner status-spinner"></i>
+                    <i v-else-if="isScanStale(scan)" class="pi pi-exclamation-triangle status-icon"></i>
+                    {{ getStatusText(scan) }}
+                  </span>
+                  <span v-if="isScanIgnored(scan.id)" class="ignored-label">
+                    <i class="pi pi-eye-slash"></i> ignored
+                  </span>
+                </div>
               </td>
               <td>{{ scan.totalDependencies }}</td>
               <td>{{ scan.resolvedLicenses }}</td>
@@ -494,10 +652,30 @@ onUnmounted(() => {
               <td>{{ scan.spdxResolvedLicenses || 0 }}</td>
               <td class="duration-cell">{{ formatDuration(scan.startedAt, scan.completedAt) }}</td>
               <td>{{ scan.completedAt ? new Date(scan.completedAt).toLocaleString() : '-' }}</td>
-              <td>
-                <RouterLink :to="`/scans/${scan.id}`" class="btn btn-small">
-                  View
-                </RouterLink>
+              <td class="actions-cell">
+                <div class="action-buttons">
+                  <RouterLink :to="`/scans/${scan.id}`" class="btn btn-small">
+                    View
+                  </RouterLink>
+                  <!-- Show stop watching button for stale scans that aren't ignored -->
+                  <button
+                    v-if="isScanStale(scan) && !isScanIgnored(scan.id)"
+                    class="btn btn-small btn-outline-danger"
+                    @click="ignoreStaleScan(scan.id)"
+                    title="Stop tracking this scan"
+                  >
+                    <i class="pi pi-times"></i> Stop
+                  </button>
+                  <!-- Show resume watching button for ignored scans -->
+                  <button
+                    v-else-if="isScanIgnored(scan.id)"
+                    class="btn btn-small btn-outline"
+                    @click="resumeWatchingScan(scan.id)"
+                    title="Resume tracking this scan"
+                  >
+                    <i class="pi pi-eye"></i> Watch
+                  </button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -729,6 +907,108 @@ onUnmounted(() => {
 .status-warning { background: #fef3c7; color: #d97706; }
 .status-error { background: #fee2e2; color: #dc2626; }
 .status-pending { background: #e2e8f0; color: #64748b; }
+.status-stale { background: #fce7f3; color: #be185d; }
+
+.status-icon {
+  font-size: 0.625rem;
+}
+
+.status-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.ignored-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.625rem;
+  color: #94a3b8;
+}
+
+/* Stale scan indicator in header */
+.stale-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #be185d;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* Stale warning banner */
+.stale-warning-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #fdf2f8;
+  border: 1px solid #fbcfe8;
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.stale-warning-banner .banner-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.stale-warning-banner .banner-content > i {
+  color: #be185d;
+  font-size: 1.25rem;
+  margin-top: 0.125rem;
+}
+
+.stale-warning-banner .banner-text strong {
+  color: #9d174d;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.stale-warning-banner .banner-text p {
+  margin: 0;
+  color: #be185d;
+  font-size: 0.875rem;
+}
+
+.stale-warning-banner .banner-actions {
+  flex-shrink: 0;
+}
+
+/* Stale and ignored row styles */
+.stale-row {
+  background-color: #fef7f9;
+}
+
+.ignored-row {
+  opacity: 0.6;
+  background-color: #f8fafc;
+}
+
+/* Actions cell */
+.actions-cell {
+  white-space: nowrap;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+/* Danger outline button */
+.btn-outline-danger {
+  background: transparent;
+  border: 1px solid #fecdd3;
+  color: #e11d48;
+}
+
+.btn-outline-danger:hover {
+  background: #fff1f2;
+  border-color: #fda4af;
+}
 
 .duration-cell {
   font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
