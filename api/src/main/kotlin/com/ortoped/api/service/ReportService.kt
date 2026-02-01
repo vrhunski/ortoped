@@ -774,6 +774,521 @@ class ReportService(
             generatedAt = Clock.System.now().toString()
         )
     }
+
+    // ========================================================================
+    // EU Compliance Report
+    // ========================================================================
+
+    /**
+     * Generate EU Compliance Report
+     *
+     * This report is designed for EU/German regulatory requirements and includes:
+     * - Complete audit trail of all actions
+     * - Structured justifications for all license decisions
+     * - Two-role approval chain (curator and approver)
+     * - OR license resolution documentation
+     * - Distribution scope for each dependency
+     *
+     * Workflow: SCAN → POLICY CHECK → CURATION → EU COMPLIANCE REPORT
+     */
+    fun generateEuComplianceReport(scanId: String, format: String = "json"): EuComplianceReportResponse {
+        val scanUuid = UUID.fromString(scanId)
+
+        // Get scan
+        val scanEntity = scanRepository.findById(scanUuid)
+            ?: throw NotFoundException("Scan not found: $scanId")
+
+        if (scanEntity.status != "complete") {
+            throw BadRequestException("Cannot generate EU compliance report for incomplete scan")
+        }
+
+        val scanResult = scanEntity.result?.let {
+            json.decodeFromString<ScanResult>(it)
+        } ?: throw BadRequestException("Scan has no result")
+
+        // Get curation session - must be approved for EU compliance report
+        val session = curationSessionRepository.findByScanId(scanUuid)
+        if (session == null || session.status != "APPROVED") {
+            throw BadRequestException(
+                "EU Compliance Report requires approved curation. " +
+                "Current status: ${session?.status ?: "NO_CURATION"}"
+            )
+        }
+
+        // Get project info
+        val project = scanEntity.projectId?.let { projectRepository.findById(it) }
+
+        // Get curations with justifications
+        val curations = curationRepository.findBySessionId(session.id)
+
+        // Get policy evaluation
+        val policyEvals = policyRepository.findEvaluationsByScan(scanUuid)
+        val latestPolicy = policyEvals.firstOrNull()
+
+        // Build report
+        val reportId = UUID.randomUUID().toString()
+        val now = Clock.System.now().toString()
+
+        val euReport = EuComplianceReport(
+            reportId = reportId,
+            reportVersion = "1.0",
+            generatedAt = now,
+            regulatory = EuRegulatoryInfo(
+                framework = "EU Cyber Resilience Act / German IT Security Act",
+                complianceLevel = "FULL",
+                auditReady = true,
+                fourEyesPrincipleApplied = session.approvedBy != null,
+                allLicensesDocumented = curations.all { it.status != "PENDING" }
+            ),
+            project = EuProjectInfo(
+                id = project?.id?.toString(),
+                name = scanResult.projectName,
+                repositoryUrl = project?.repositoryUrl,
+                branch = project?.defaultBranch,
+                scanDate = scanResult.scanDate,
+                distributionScope = "BINARY" // TODO: Get from project settings
+            ),
+            workflowSummary = EuWorkflowSummary(
+                scanCompletedAt = scanEntity.completedAt ?: scanEntity.createdAt,
+                policyEvaluatedAt = latestPolicy?.createdAt,
+                policyPassed = latestPolicy?.passed,
+                curationStartedAt = session.createdAt,
+                curationSubmittedAt = session.submittedAt,
+                curationApprovedAt = session.approvedAt,
+                curatorId = session.curatorId,
+                approverId = session.approvedBy
+            ),
+            statistics = EuComplianceStats(
+                totalDependencies = scanResult.summary.totalDependencies,
+                licensesResolvedByDeclared = scanResult.dependencies.count {
+                    it.declaredLicenses.isNotEmpty() && it.aiSuggestion == null
+                },
+                licensesResolvedByAi = scanResult.summary.aiResolvedLicenses,
+                licensesResolvedByCuration = curations.count { it.status != "PENDING" },
+                policyViolationsFound = latestPolicy?.errorCount ?: 0,
+                policyViolationsResolved = curations.count {
+                    it.status == "ACCEPTED" || it.status == "MODIFIED"
+                },
+                orLicensesResolved = curations.count {
+                    it.isOrLicense == true && it.orLicenseChoice != null
+                },
+                justificationsProvided = curations.count { it.justificationComplete == true }
+            ),
+            licenseDecisions = curations.map { curation ->
+                // Get justification from separate table if exists
+                val justification = if (curation.justificationComplete) {
+                    curationRepository.getJustification(curation.id)
+                } else null
+
+                EuLicenseDecision(
+                    dependencyId = curation.dependencyId,
+                    dependencyName = curation.dependencyName,
+                    dependencyVersion = curation.dependencyVersion,
+                    originalLicense = curation.originalLicense,
+                    concludedLicense = curation.curatedLicense ?: curation.originalLicense,
+                    spdxId = curation.curatedLicense, // Assuming curated license is SPDX
+                    licenseCategory = categorizeLicense(curation.curatedLicense ?: curation.originalLicense ?: "UNKNOWN"),
+                    decision = EuDecisionInfo(
+                        action = curation.status,
+                        aiSuggested = curation.aiSuggestedLicense,
+                        aiConfidence = curation.aiConfidence,
+                        curatorComment = curation.curatorComment,
+                        curatedBy = curation.curatorId,
+                        curatedAt = curation.curatedAt
+                    ),
+                    justification = justification?.let {
+                        EuJustificationInfo(
+                            type = it.justificationType,
+                            text = it.justificationText,
+                            evidenceType = it.evidenceType,
+                            evidenceReference = it.evidenceReference,
+                            policyRuleId = curation.blockingPolicyRule
+                        )
+                    },
+                    orLicenseResolution = if (curation.isOrLicense) {
+                        EuOrLicenseResolution(
+                            originalExpression = curation.originalLicense,
+                            chosenLicense = curation.orLicenseChoice,
+                            choiceReason = curation.curatorComment
+                        )
+                    } else null,
+                    distributionScope = curation.distributionScope ?: "BINARY"
+                )
+            },
+            approvalChain = EuApprovalChain(
+                curator = EuActorInfo(
+                    id = session.curatorId,
+                    name = session.curatorName,
+                    role = "CURATOR",
+                    actionDate = session.createdAt,
+                    action = "CURATED"
+                ),
+                approver = if (session.approvedBy != null) {
+                    EuActorInfo(
+                        id = session.approvedBy,
+                        name = session.approverName,
+                        role = session.approverRole ?: "APPROVER",
+                        actionDate = session.approvedAt,
+                        action = "APPROVED"
+                    )
+                } else null,
+                approvalComment = session.approvalComment,
+                fourEyesCompliant = session.curatorId != session.approvedBy
+            ),
+            auditTrail = buildEuAuditTrail(scanUuid, session.id)
+        )
+
+        // Generate output based on format
+        val content = when (format.lowercase()) {
+            "html" -> generateEuComplianceHtmlReport(euReport)
+            else -> json.encodeToString(euReport)
+        }
+
+        val safeName = scanResult.projectName.replace(Regex("[^a-zA-Z0-9.-]"), "_")
+        val timestamp = Clock.System.now().toString().take(10)
+        val extension = if (format.lowercase() == "html") "html" else "json"
+        val filename = "eu-compliance-$safeName-$timestamp.$extension"
+
+        logger.info { "Generated EU Compliance report for scan $scanId" }
+
+        return EuComplianceReportResponse(
+            reportId = reportId,
+            scanId = scanId,
+            format = format,
+            filename = filename,
+            content = content,
+            generatedAt = now,
+            complianceStatus = if (euReport.regulatory.allLicensesDocumented && euReport.regulatory.fourEyesPrincipleApplied) {
+                "COMPLIANT"
+            } else {
+                "PARTIAL"
+            }
+        )
+    }
+
+    private fun buildEuAuditTrail(scanId: UUID, sessionId: UUID): List<EuAuditEntry> {
+        val entries = mutableListOf<EuAuditEntry>()
+
+        // Scan events
+        val scan = scanRepository.findById(scanId)
+        if (scan != null) {
+            entries.add(EuAuditEntry(
+                timestamp = scan.createdAt,
+                phase = "SCAN",
+                action = "SCAN_STARTED",
+                actor = "system",
+                actorRole = "SYSTEM",
+                description = "Dependency scan initiated",
+                entityType = "SCAN",
+                entityId = scanId.toString()
+            ))
+            if (scan.completedAt != null) {
+                entries.add(EuAuditEntry(
+                    timestamp = scan.completedAt,
+                    phase = "SCAN",
+                    action = "SCAN_COMPLETED",
+                    actor = "system",
+                    actorRole = "SYSTEM",
+                    description = "Scan completed with ${scan.status} status",
+                    entityType = "SCAN",
+                    entityId = scanId.toString()
+                ))
+            }
+        }
+
+        // Policy events
+        val policyEvals = policyRepository.findEvaluationsByScan(scanId)
+        policyEvals.forEach { eval ->
+            entries.add(EuAuditEntry(
+                timestamp = eval.createdAt,
+                phase = "POLICY",
+                action = "POLICY_EVALUATED",
+                actor = "system",
+                actorRole = "SYSTEM",
+                description = "Policy evaluation: ${if (eval.passed) "PASSED" else "FAILED"} with ${eval.errorCount} violations",
+                entityType = "POLICY_EVALUATION",
+                entityId = eval.id.toString()
+            ))
+        }
+
+        // Curation events
+        val session = curationSessionRepository.findById(sessionId)
+        if (session != null) {
+            entries.add(EuAuditEntry(
+                timestamp = session.createdAt,
+                phase = "CURATION",
+                action = "SESSION_STARTED",
+                actor = session.curatorId,
+                actorRole = "CURATOR",
+                description = "Curation session started with ${session.totalItems} items",
+                entityType = "CURATION_SESSION",
+                entityId = sessionId.toString()
+            ))
+
+            if (session.submittedAt != null) {
+                entries.add(EuAuditEntry(
+                    timestamp = session.submittedAt,
+                    phase = "CURATION",
+                    action = "SUBMITTED_FOR_APPROVAL",
+                    actor = session.submittedBy ?: session.curatorId,
+                    actorRole = "CURATOR",
+                    description = "Curation submitted for approval",
+                    entityType = "CURATION_SESSION",
+                    entityId = sessionId.toString()
+                ))
+            }
+
+            if (session.approvedAt != null && session.approvedBy != null) {
+                entries.add(EuAuditEntry(
+                    timestamp = session.approvedAt,
+                    phase = "APPROVAL",
+                    action = "SESSION_APPROVED",
+                    actor = session.approvedBy,
+                    actorRole = session.approverRole ?: "APPROVER",
+                    description = session.approvalComment ?: "Curation approved (four-eyes principle applied)",
+                    entityType = "CURATION_SESSION",
+                    entityId = sessionId.toString()
+                ))
+            }
+        }
+
+        // Individual curation decisions
+        val curations = curationRepository.findBySessionId(sessionId)
+        curations.filter { it.status != "PENDING" }.forEach { c ->
+            if (c.curatedAt != null) {
+                entries.add(EuAuditEntry(
+                    timestamp = c.curatedAt,
+                    phase = "CURATION",
+                    action = "LICENSE_DECISION",
+                    actor = c.curatorId ?: "unknown",
+                    actorRole = "CURATOR",
+                    description = "${c.status}: ${c.dependencyName} → ${c.curatedLicense ?: c.originalLicense}",
+                    entityType = "CURATION",
+                    entityId = c.id.toString()
+                ))
+            }
+        }
+
+        return entries.sortedBy { it.timestamp }
+    }
+
+    private fun generateEuComplianceHtmlReport(report: EuComplianceReport): String {
+        return buildString {
+            appendLine("<!DOCTYPE html>")
+            appendLine("<html lang=\"en\">")
+            appendLine("<head>")
+            appendLine("  <meta charset=\"UTF-8\">")
+            appendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">")
+            appendLine("  <title>EU Compliance Report - ${report.project.name}</title>")
+            appendLine("  <style>")
+            appendLine(getEuReportStyles())
+            appendLine("  </style>")
+            appendLine("</head>")
+            appendLine("<body>")
+
+            // Header with regulatory badge
+            appendLine("  <header>")
+            appendLine("    <div class=\"regulatory-badge\">")
+            appendLine("      <span class=\"badge-text\">EU COMPLIANT</span>")
+            appendLine("      <span class=\"badge-framework\">${report.regulatory.framework}</span>")
+            appendLine("    </div>")
+            appendLine("    <h1>License Compliance Report</h1>")
+            appendLine("    <p class=\"subtitle\">${report.project.name}</p>")
+            appendLine("    <p class=\"meta\">Generated: ${report.generatedAt} | Report ID: ${report.reportId}</p>")
+            appendLine("  </header>")
+
+            // Compliance Status
+            appendLine("  <section class=\"compliance-status\">")
+            appendLine("    <h2>Compliance Status</h2>")
+            appendLine("    <div class=\"status-grid\">")
+            appendLine("      <div class=\"status-item ${if (report.regulatory.auditReady) "success" else "warning"}\">")
+            appendLine("        <span class=\"icon\">${if (report.regulatory.auditReady) "✓" else "!"}</span>")
+            appendLine("        <span class=\"label\">Audit Ready</span>")
+            appendLine("      </div>")
+            appendLine("      <div class=\"status-item ${if (report.regulatory.fourEyesPrincipleApplied) "success" else "error"}\">")
+            appendLine("        <span class=\"icon\">${if (report.regulatory.fourEyesPrincipleApplied) "✓" else "✗"}</span>")
+            appendLine("        <span class=\"label\">Four-Eyes Principle</span>")
+            appendLine("      </div>")
+            appendLine("      <div class=\"status-item ${if (report.regulatory.allLicensesDocumented) "success" else "warning"}\">")
+            appendLine("        <span class=\"icon\">${if (report.regulatory.allLicensesDocumented) "✓" else "!"}</span>")
+            appendLine("        <span class=\"label\">All Licenses Documented</span>")
+            appendLine("      </div>")
+            appendLine("    </div>")
+            appendLine("  </section>")
+
+            // Workflow Summary
+            appendLine("  <section>")
+            appendLine("    <h2>Workflow Timeline</h2>")
+            appendLine("    <div class=\"timeline\">")
+            appendLine("      <div class=\"timeline-item\">")
+            appendLine("        <span class=\"date\">${report.workflowSummary.scanCompletedAt}</span>")
+            appendLine("        <span class=\"event\">Scan Completed</span>")
+            appendLine("      </div>")
+            report.workflowSummary.policyEvaluatedAt?.let {
+                appendLine("      <div class=\"timeline-item\">")
+                appendLine("        <span class=\"date\">$it</span>")
+                appendLine("        <span class=\"event\">Policy Evaluated: ${if (report.workflowSummary.policyPassed == true) "PASSED" else "FAILED"}</span>")
+                appendLine("      </div>")
+            }
+            appendLine("      <div class=\"timeline-item\">")
+            appendLine("        <span class=\"date\">${report.workflowSummary.curationStartedAt}</span>")
+            appendLine("        <span class=\"event\">Curation Started by ${report.workflowSummary.curatorId}</span>")
+            appendLine("      </div>")
+            report.workflowSummary.curationSubmittedAt?.let {
+                appendLine("      <div class=\"timeline-item\">")
+                appendLine("        <span class=\"date\">$it</span>")
+                appendLine("        <span class=\"event\">Submitted for Approval</span>")
+                appendLine("      </div>")
+            }
+            report.workflowSummary.curationApprovedAt?.let {
+                appendLine("      <div class=\"timeline-item success\">")
+                appendLine("        <span class=\"date\">$it</span>")
+                appendLine("        <span class=\"event\">Approved by ${report.workflowSummary.approverId}</span>")
+                appendLine("      </div>")
+            }
+            appendLine("    </div>")
+            appendLine("  </section>")
+
+            // Statistics
+            appendLine("  <section>")
+            appendLine("    <h2>Statistics</h2>")
+            appendLine("    <div class=\"stats-grid\">")
+            appendLine("      <div class=\"stat\"><span class=\"value\">${report.statistics.totalDependencies}</span><span class=\"label\">Total Dependencies</span></div>")
+            appendLine("      <div class=\"stat\"><span class=\"value\">${report.statistics.licensesResolvedByDeclared}</span><span class=\"label\">Declared Licenses</span></div>")
+            appendLine("      <div class=\"stat\"><span class=\"value\">${report.statistics.licensesResolvedByAi}</span><span class=\"label\">AI Resolved</span></div>")
+            appendLine("      <div class=\"stat\"><span class=\"value\">${report.statistics.licensesResolvedByCuration}</span><span class=\"label\">Curated</span></div>")
+            appendLine("      <div class=\"stat\"><span class=\"value\">${report.statistics.justificationsProvided}</span><span class=\"label\">Justifications</span></div>")
+            appendLine("      <div class=\"stat\"><span class=\"value\">${report.statistics.orLicensesResolved}</span><span class=\"label\">OR Licenses Resolved</span></div>")
+            appendLine("    </div>")
+            appendLine("  </section>")
+
+            // Approval Chain
+            appendLine("  <section class=\"approval-chain\">")
+            appendLine("    <h2>Approval Chain</h2>")
+            appendLine("    <div class=\"chain\">")
+            appendLine("      <div class=\"actor curator\">")
+            appendLine("        <span class=\"role\">Curator</span>")
+            appendLine("        <span class=\"name\">${report.approvalChain.curator.name ?: report.approvalChain.curator.id}</span>")
+            appendLine("        <span class=\"date\">${report.approvalChain.curator.actionDate}</span>")
+            appendLine("      </div>")
+            appendLine("      <div class=\"arrow\">→</div>")
+            report.approvalChain.approver?.let { approver ->
+                appendLine("      <div class=\"actor approver\">")
+                appendLine("        <span class=\"role\">${approver.role}</span>")
+                appendLine("        <span class=\"name\">${approver.name ?: approver.id}</span>")
+                appendLine("        <span class=\"date\">${approver.actionDate}</span>")
+                appendLine("      </div>")
+            }
+            appendLine("    </div>")
+            if (report.approvalChain.fourEyesCompliant) {
+                appendLine("    <p class=\"compliance-note success\">✓ Four-eyes principle verified: Curator and Approver are different persons</p>")
+            }
+            appendLine("  </section>")
+
+            // License Decisions Table
+            appendLine("  <section>")
+            appendLine("    <h2>License Decisions (${report.licenseDecisions.size})</h2>")
+            appendLine("    <table>")
+            appendLine("      <thead><tr><th>Dependency</th><th>Original</th><th>Concluded</th><th>Category</th><th>Action</th><th>Justification</th></tr></thead>")
+            appendLine("      <tbody>")
+            report.licenseDecisions.forEach { decision ->
+                appendLine("        <tr>")
+                appendLine("          <td>${decision.dependencyName}@${decision.dependencyVersion}</td>")
+                appendLine("          <td>${decision.originalLicense ?: "UNKNOWN"}</td>")
+                appendLine("          <td>${decision.concludedLicense}</td>")
+                appendLine("          <td><span class=\"category ${decision.licenseCategory.lowercase()}\">${decision.licenseCategory}</span></td>")
+                appendLine("          <td>${decision.decision.action}</td>")
+                appendLine("          <td>${decision.justification?.type ?: "-"}</td>")
+                appendLine("        </tr>")
+            }
+            appendLine("      </tbody>")
+            appendLine("    </table>")
+            appendLine("  </section>")
+
+            // Audit Trail
+            appendLine("  <section>")
+            appendLine("    <h2>Audit Trail</h2>")
+            appendLine("    <table class=\"audit-table\">")
+            appendLine("      <thead><tr><th>Timestamp</th><th>Phase</th><th>Action</th><th>Actor</th><th>Description</th></tr></thead>")
+            appendLine("      <tbody>")
+            report.auditTrail.forEach { entry ->
+                appendLine("        <tr>")
+                appendLine("          <td>${entry.timestamp}</td>")
+                appendLine("          <td><span class=\"phase ${entry.phase.lowercase()}\">${entry.phase}</span></td>")
+                appendLine("          <td>${entry.action}</td>")
+                appendLine("          <td>${entry.actor} (${entry.actorRole})</td>")
+                appendLine("          <td>${entry.description}</td>")
+                appendLine("        </tr>")
+            }
+            appendLine("      </tbody>")
+            appendLine("    </table>")
+            appendLine("  </section>")
+
+            // Footer
+            appendLine("  <footer>")
+            appendLine("    <p>This report is generated for EU/German regulatory compliance purposes.</p>")
+            appendLine("    <p>Report Version: ${report.reportVersion} | Generated by OrtoPed</p>")
+            appendLine("  </footer>")
+
+            appendLine("</body>")
+            appendLine("</html>")
+        }
+    }
+
+    private fun getEuReportStyles(): String = """
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 1400px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        header { text-align: center; margin-bottom: 40px; padding: 30px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .regulatory-badge { display: inline-block; padding: 10px 20px; background: linear-gradient(135deg, #1a365d, #2a4a7f); color: white; border-radius: 4px; margin-bottom: 20px; }
+        .badge-text { font-size: 1.4em; font-weight: bold; display: block; }
+        .badge-framework { font-size: 0.8em; opacity: 0.9; }
+        h1 { font-size: 2.2em; color: #1a1a2e; margin-top: 15px; }
+        .subtitle { font-size: 1.3em; color: #666; }
+        .meta { color: #999; font-size: 0.9em; }
+        section { background: white; margin-bottom: 25px; padding: 25px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h2 { color: #1a1a2e; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0; }
+        .compliance-status .status-grid { display: flex; justify-content: center; gap: 30px; }
+        .status-item { display: flex; flex-direction: column; align-items: center; padding: 20px 30px; border-radius: 8px; background: #f8f9fa; }
+        .status-item .icon { font-size: 2em; margin-bottom: 10px; }
+        .status-item.success { background: #d4edda; color: #155724; }
+        .status-item.warning { background: #fff3cd; color: #856404; }
+        .status-item.error { background: #f8d7da; color: #721c24; }
+        .timeline { position: relative; padding-left: 30px; }
+        .timeline::before { content: ''; position: absolute; left: 8px; top: 0; bottom: 0; width: 2px; background: #e0e0e0; }
+        .timeline-item { position: relative; padding: 10px 0; padding-left: 20px; }
+        .timeline-item::before { content: ''; position: absolute; left: -26px; top: 15px; width: 12px; height: 12px; border-radius: 50%; background: #667; border: 2px solid white; }
+        .timeline-item.success::before { background: #28a745; }
+        .timeline-item .date { font-size: 0.85em; color: #666; }
+        .timeline-item .event { display: block; font-weight: 500; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 15px; }
+        .stat { background: #f8f9fa; padding: 20px; border-radius: 8px; text-align: center; }
+        .stat .value { display: block; font-size: 2em; font-weight: bold; color: #1a1a2e; }
+        .stat .label { display: block; color: #666; font-size: 0.85em; margin-top: 5px; }
+        .approval-chain .chain { display: flex; align-items: center; justify-content: center; gap: 20px; margin: 20px 0; }
+        .actor { padding: 20px; background: #f8f9fa; border-radius: 8px; text-align: center; min-width: 180px; }
+        .actor .role { display: block; font-size: 0.85em; color: #666; text-transform: uppercase; }
+        .actor .name { display: block; font-weight: 600; font-size: 1.1em; margin: 5px 0; }
+        .actor .date { display: block; font-size: 0.8em; color: #999; }
+        .actor.curator { border-left: 4px solid #3498db; }
+        .actor.approver { border-left: 4px solid #27ae60; }
+        .arrow { font-size: 2em; color: #ccc; }
+        .compliance-note { margin-top: 15px; padding: 10px; border-radius: 4px; }
+        .compliance-note.success { background: #d4edda; color: #155724; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e0e0e0; }
+        th { background: #f8f9fa; font-weight: 600; }
+        tr:hover { background: #f8f9fa; }
+        .category { padding: 3px 8px; border-radius: 3px; font-size: 0.85em; }
+        .category.permissive { background: #d4edda; color: #155724; }
+        .category.copyleft { background: #fff3cd; color: #856404; }
+        .category.unknown { background: #f8d7da; color: #721c24; }
+        .phase { padding: 2px 6px; border-radius: 3px; font-size: 0.8em; }
+        .phase.scan { background: #e3f2fd; color: #1565c0; }
+        .phase.policy { background: #fce4ec; color: #c2185b; }
+        .phase.curation { background: #e8f5e9; color: #2e7d32; }
+        .phase.approval { background: #fff8e1; color: #f57f17; }
+        footer { text-align: center; padding: 20px; color: #666; font-size: 0.9em; }
+    """.trimIndent()
 }
 
 // ============================================================================
@@ -959,4 +1474,146 @@ data class OrtRuleViolation(
     val severity: String,
     val message: String,
     val howToFix: String
+)
+
+// ============================================================================
+// EU Compliance Report Models
+// ============================================================================
+
+@kotlinx.serialization.Serializable
+data class EuComplianceReportResponse(
+    val reportId: String,
+    val scanId: String,
+    val format: String,
+    val filename: String,
+    val content: String,
+    val generatedAt: String,
+    val complianceStatus: String
+)
+
+@kotlinx.serialization.Serializable
+data class EuComplianceReport(
+    val reportId: String,
+    val reportVersion: String,
+    val generatedAt: String,
+    val regulatory: EuRegulatoryInfo,
+    val project: EuProjectInfo,
+    val workflowSummary: EuWorkflowSummary,
+    val statistics: EuComplianceStats,
+    val licenseDecisions: List<EuLicenseDecision>,
+    val approvalChain: EuApprovalChain,
+    val auditTrail: List<EuAuditEntry>
+)
+
+@kotlinx.serialization.Serializable
+data class EuRegulatoryInfo(
+    val framework: String,
+    val complianceLevel: String,
+    val auditReady: Boolean,
+    val fourEyesPrincipleApplied: Boolean,
+    val allLicensesDocumented: Boolean
+)
+
+@kotlinx.serialization.Serializable
+data class EuProjectInfo(
+    val id: String?,
+    val name: String,
+    val repositoryUrl: String?,
+    val branch: String?,
+    val scanDate: String,
+    val distributionScope: String
+)
+
+@kotlinx.serialization.Serializable
+data class EuWorkflowSummary(
+    val scanCompletedAt: String,
+    val policyEvaluatedAt: String?,
+    val policyPassed: Boolean?,
+    val curationStartedAt: String,
+    val curationSubmittedAt: String?,
+    val curationApprovedAt: String?,
+    val curatorId: String,
+    val approverId: String?
+)
+
+@kotlinx.serialization.Serializable
+data class EuComplianceStats(
+    val totalDependencies: Int,
+    val licensesResolvedByDeclared: Int,
+    val licensesResolvedByAi: Int,
+    val licensesResolvedByCuration: Int,
+    val policyViolationsFound: Int,
+    val policyViolationsResolved: Int,
+    val orLicensesResolved: Int,
+    val justificationsProvided: Int
+)
+
+@kotlinx.serialization.Serializable
+data class EuLicenseDecision(
+    val dependencyId: String,
+    val dependencyName: String,
+    val dependencyVersion: String,
+    val originalLicense: String?,
+    val concludedLicense: String?,
+    val spdxId: String?,
+    val licenseCategory: String,
+    val decision: EuDecisionInfo,
+    val justification: EuJustificationInfo?,
+    val orLicenseResolution: EuOrLicenseResolution?,
+    val distributionScope: String
+)
+
+@kotlinx.serialization.Serializable
+data class EuDecisionInfo(
+    val action: String,
+    val aiSuggested: String?,
+    val aiConfidence: String?,
+    val curatorComment: String?,
+    val curatedBy: String?,
+    val curatedAt: String?
+)
+
+@kotlinx.serialization.Serializable
+data class EuJustificationInfo(
+    val type: String,
+    val text: String?,
+    val evidenceType: String?,
+    val evidenceReference: String?,
+    val policyRuleId: String?
+)
+
+@kotlinx.serialization.Serializable
+data class EuOrLicenseResolution(
+    val originalExpression: String?,
+    val chosenLicense: String?,
+    val choiceReason: String?
+)
+
+@kotlinx.serialization.Serializable
+data class EuApprovalChain(
+    val curator: EuActorInfo,
+    val approver: EuActorInfo?,
+    val approvalComment: String?,
+    val fourEyesCompliant: Boolean
+)
+
+@kotlinx.serialization.Serializable
+data class EuActorInfo(
+    val id: String,
+    val name: String?,
+    val role: String,
+    val actionDate: String?,
+    val action: String
+)
+
+@kotlinx.serialization.Serializable
+data class EuAuditEntry(
+    val timestamp: String,
+    val phase: String,
+    val action: String,
+    val actor: String,
+    val actorRole: String,
+    val description: String,
+    val entityType: String,
+    val entityId: String
 )

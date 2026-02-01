@@ -119,6 +119,31 @@ class ScanRepository {
         Scans.deleteWhere { Scans.id eq id } > 0
     }
 
+    // ========================================================================
+    // EU Compliance Methods
+    // ========================================================================
+
+    /**
+     * Mark scan as curation complete
+     */
+    fun markCurationComplete(id: UUID): Boolean = transaction {
+        val updated = Scans.update({ Scans.id eq id }) {
+            it[curationComplete] = true
+        }
+        updated > 0
+    }
+
+    /**
+     * Check if curation is required and complete for a scan
+     */
+    fun isCurationComplete(id: UUID): Boolean = transaction {
+        Scans.selectAll()
+            .where { Scans.id eq id }
+            .singleOrNull()
+            ?.let { !it[Scans.curationRequired] || it[Scans.curationComplete] }
+            ?: false
+    }
+
     private fun ResultRow.toScanEntity() = ScanEntity(
         id = this[Scans.id].value,
         projectId = this[Scans.projectId],
@@ -129,7 +154,9 @@ class ScanRepository {
         startedAt = this[Scans.startedAt]?.toString(),
         completedAt = this[Scans.completedAt]?.toString(),
         errorMessage = this[Scans.errorMessage],
-        createdAt = this[Scans.createdAt].toString()
+        createdAt = this[Scans.createdAt].toString(),
+        curationRequired = this[Scans.curationRequired],
+        curationComplete = this[Scans.curationComplete]
     )
 }
 
@@ -143,5 +170,8 @@ data class ScanEntity(
     val startedAt: String?,
     val completedAt: String?,
     val errorMessage: String?,
-    val createdAt: String
+    val createdAt: String,
+    // EU Compliance fields
+    val curationRequired: Boolean = true,
+    val curationComplete: Boolean = false
 )

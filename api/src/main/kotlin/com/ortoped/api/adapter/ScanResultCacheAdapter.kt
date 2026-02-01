@@ -2,11 +2,16 @@ package com.ortoped.api.adapter
 
 import com.ortoped.api.repository.OrtCacheRepository
 import com.ortoped.core.scanner.ScanResultCache
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /**
  * Adapter that bridges OrtCacheRepository with the ScanResultCache interface
  * used by CachingAnalyzerWrapper in the core module.
+ * 
+ * Uses suspend functions with Dispatchers.IO to properly handle database operations
+ * in a coroutine-friendly way.
  */
 class ScanResultCacheAdapter(
     private val repository: OrtCacheRepository
@@ -17,7 +22,9 @@ class ScanResultCacheAdapter(
         revision: String,
         configHash: String
     ): ByteArray? {
-        return repository.getCachedScanResult(projectUrl, revision, configHash)
+        return withContext(Dispatchers.IO) {
+            repository.getCachedScanResult(projectUrl, revision, configHash)
+        }
     }
 
     override suspend fun cacheScanResult(
@@ -30,15 +37,17 @@ class ScanResultCacheAdapter(
         issueCount: Int,
         ttlHours: Int
     ): UUID {
-        return repository.cacheScanResult(
-            projectUrl = projectUrl,
-            revision = revision,
-            configHash = configHash,
-            ortVersion = ortVersion,
-            ortResult = ortResult,
-            packageCount = packageCount,
-            issueCount = issueCount,
-            ttlHours = ttlHours
-        )
+        return withContext(Dispatchers.IO) {
+            repository.cacheScanResult(
+                projectUrl = projectUrl,
+                revision = revision,
+                configHash = configHash,
+                ortVersion = ortVersion,
+                ortResult = ortResult,
+                packageCount = packageCount,
+                issueCount = issueCount,
+                ttlHours = ttlHours
+            )
+        }
     }
 }

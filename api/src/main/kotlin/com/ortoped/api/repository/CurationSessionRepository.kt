@@ -54,7 +54,9 @@ class CurationSessionRepository {
 
     fun create(
         scanId: UUID,
-        totalItems: Int = 0
+        totalItems: Int = 0,
+        curatorId: String = "system",
+        curatorName: String? = null
     ): CurationSessionEntity = transaction {
         val id = UUID.randomUUID()
         val now = Clock.System.now()
@@ -68,6 +70,8 @@ class CurationSessionRepository {
             it[CurationSessions.acceptedItems] = 0
             it[CurationSessions.rejectedItems] = 0
             it[CurationSessions.modifiedItems] = 0
+            it[CurationSessions.curatorId] = curatorId
+            it[CurationSessions.curatorName] = curatorName
             it[CurationSessions.createdAt] = now
             it[CurationSessions.updatedAt] = now
         }
@@ -81,7 +85,11 @@ class CurationSessionRepository {
             acceptedItems = 0,
             rejectedItems = 0,
             modifiedItems = 0,
+            curatorId = curatorId,
+            curatorName = curatorName,
             approvedBy = null,
+            approverName = null,
+            approverRole = null,
             approvedAt = null,
             approvalComment = null,
             createdAt = now.toString(),
@@ -117,12 +125,16 @@ class CurationSessionRepository {
     fun approve(
         id: UUID,
         approvedBy: String,
+        approverName: String? = null,
+        approverRole: String? = null,
         comment: String? = null
     ): Boolean = transaction {
         val now = Clock.System.now()
         val updated = CurationSessions.update({ CurationSessions.id eq id }) {
             it[status] = CurationSessionStatus.APPROVED.value
             it[CurationSessions.approvedBy] = approvedBy
+            it[CurationSessions.approverName] = approverName
+            it[CurationSessions.approverRole] = approverRole
             it[approvedAt] = now
             it[approvalComment] = comment
             it[updatedAt] = now
@@ -152,6 +164,38 @@ class CurationSessionRepository {
         )
     }
 
+    // ========================================================================
+    // EU Compliance Methods
+    // ========================================================================
+
+    /**
+     * Mark session as submitted for approval
+     */
+    fun markSubmittedForApproval(id: UUID, submitterId: String): Boolean = transaction {
+        val now = Clock.System.now()
+        val updated = CurationSessions.update({ CurationSessions.id eq id }) {
+            it[submittedForApproval] = true
+            it[submittedAt] = now
+            it[submittedBy] = submitterId
+            it[updatedAt] = now
+        }
+        updated > 0
+    }
+
+    /**
+     * Reset submission (when returned for revision)
+     */
+    fun resetSubmission(id: UUID): Boolean = transaction {
+        val now = Clock.System.now()
+        val updated = CurationSessions.update({ CurationSessions.id eq id }) {
+            it[submittedForApproval] = false
+            it[submittedAt] = null
+            it[status] = CurationSessionStatus.IN_PROGRESS.value
+            it[updatedAt] = now
+        }
+        updated > 0
+    }
+
     private fun ResultRow.toEntity() = CurationSessionEntity(
         id = this[CurationSessions.id].value,
         scanId = this[CurationSessions.scanId],
@@ -161,9 +205,16 @@ class CurationSessionRepository {
         acceptedItems = this[CurationSessions.acceptedItems],
         rejectedItems = this[CurationSessions.rejectedItems],
         modifiedItems = this[CurationSessions.modifiedItems],
+        curatorId = this[CurationSessions.curatorId],
+        curatorName = this[CurationSessions.curatorName],
         approvedBy = this[CurationSessions.approvedBy],
+        approverName = this[CurationSessions.approverName],
+        approverRole = this[CurationSessions.approverRole],
         approvedAt = this[CurationSessions.approvedAt]?.toString(),
         approvalComment = this[CurationSessions.approvalComment],
+        submittedForApproval = this[CurationSessions.submittedForApproval],
+        submittedAt = this[CurationSessions.submittedAt]?.toString(),
+        submittedBy = this[CurationSessions.submittedBy],
         createdAt = this[CurationSessions.createdAt].toString(),
         updatedAt = this[CurationSessions.updatedAt].toString()
     )
@@ -178,9 +229,19 @@ data class CurationSessionEntity(
     val acceptedItems: Int,
     val rejectedItems: Int,
     val modifiedItems: Int,
+    // Curator info
+    val curatorId: String,
+    val curatorName: String?,
+    // Approval info
     val approvedBy: String?,
+    val approverName: String?,
+    val approverRole: String?,
     val approvedAt: String?,
     val approvalComment: String?,
+    // EU Compliance fields
+    val submittedForApproval: Boolean = false,
+    val submittedAt: String? = null,
+    val submittedBy: String? = null,
     val createdAt: String,
     val updatedAt: String
 )

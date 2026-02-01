@@ -3,7 +3,7 @@ package com.ortoped.core.ai
 import com.ortoped.core.model.LicenseSuggestion
 import com.ortoped.core.model.UnresolvedLicense
 import io.mockk.*
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
@@ -27,7 +27,7 @@ class CachingLicenseResolverTest {
     }
 
     @Test
-    fun `should return cached resolution on cache hit`() = runBlocking {
+    fun `should return cached resolution on cache hit`() = runTest {
         val unresolved = UnresolvedLicense(
             dependencyId = "Maven:org.example:lib:1.0.0",
             dependencyName = "org.example:lib",
@@ -44,7 +44,7 @@ class CachingLicenseResolverTest {
             reasoning = "Cached AI resolution"
         )
 
-        every { mockCache.getCachedResolution(any(), any()) } returns cachedResolution
+        coEvery { mockCache.getCachedResolution(any(), any()) } returns cachedResolution
 
         val result = cachingResolver.resolveLicense(unresolved)
 
@@ -57,7 +57,7 @@ class CachingLicenseResolverTest {
     }
 
     @Test
-    fun `should call delegate and cache result on cache miss`() = runBlocking {
+    fun `should call delegate and cache result on cache miss`() = runTest {
         val unresolved = UnresolvedLicense(
             dependencyId = "Maven:org.example:uncached:1.0.0",
             dependencyName = "org.example:uncached",
@@ -73,7 +73,7 @@ class CachingLicenseResolverTest {
             alternatives = listOf("MIT")
         )
 
-        every { mockCache.getCachedResolution(any(), any()) } returns null
+        coEvery { mockCache.getCachedResolution(any(), any()) } returns null
         coEvery { mockDelegate.resolveLicense(any()) } returns aiSuggestion
 
         val result = cachingResolver.resolveLicense(unresolved)
@@ -86,7 +86,7 @@ class CachingLicenseResolverTest {
         coVerify(exactly = 1) { mockDelegate.resolveLicense(unresolved) }
 
         // Verify result was cached
-        verify(exactly = 1) {
+        coVerify(exactly = 1) {
             mockCache.cacheResolution(
                 packageId = "Maven:org.example:uncached:1.0.0",
                 declaredLicense = any(),
@@ -97,14 +97,14 @@ class CachingLicenseResolverTest {
     }
 
     @Test
-    fun `should not cache when delegate returns null`() = runBlocking {
+    fun `should not cache when delegate returns null`() = runTest {
         val unresolved = UnresolvedLicense(
             dependencyId = "Maven:org.example:unknown:1.0.0",
             dependencyName = "org.example:unknown",
             reason = "License not found"
         )
 
-        every { mockCache.getCachedResolution(any(), any()) } returns null
+        coEvery { mockCache.getCachedResolution(any(), any()) } returns null
         coEvery { mockDelegate.resolveLicense(any()) } returns null
 
         val result = cachingResolver.resolveLicense(unresolved)
@@ -112,11 +112,11 @@ class CachingLicenseResolverTest {
         assertNull(result)
 
         // Verify cacheResolution was NOT called
-        verify(exactly = 0) { mockCache.cacheResolution(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { mockCache.cacheResolution(any(), any(), any(), any()) }
     }
 
     @Test
-    fun `should work without cache (null cache)`() = runBlocking {
+    fun `should work without cache (null cache)`() = runTest {
         val resolverWithoutCache = CachingLicenseResolver(
             cache = null,
             delegate = mockDelegate
@@ -147,7 +147,7 @@ class CachingLicenseResolverTest {
     }
 
     @Test
-    fun `should truncate license text for cache key`() = runBlocking {
+    fun `should truncate license text for cache key`() = runTest {
         val longLicenseText = "A".repeat(1000) // Longer than 500 chars
 
         val unresolved = UnresolvedLicense(
@@ -157,7 +157,7 @@ class CachingLicenseResolverTest {
             licenseText = longLicenseText
         )
 
-        every { mockCache.getCachedResolution(any(), any()) } returns null
+        coEvery { mockCache.getCachedResolution(any(), any()) } returns null
         coEvery { mockDelegate.resolveLicense(any()) } returns LicenseSuggestion(
             suggestedLicense = "MIT",
             confidence = "HIGH",
@@ -168,7 +168,7 @@ class CachingLicenseResolverTest {
         cachingResolver.resolveLicense(unresolved)
 
         // Verify cache was called with truncated text
-        verify {
+        coVerify {
             mockCache.getCachedResolution(
                 "Maven:org.example:longtext:1.0.0",
                 match { it != null && it.length == 500 }
@@ -177,7 +177,7 @@ class CachingLicenseResolverTest {
     }
 
     @Test
-    fun `should handle cache exception gracefully`() = runBlocking {
+    fun `should handle cache exception gracefully`() = runTest {
         val unresolved = UnresolvedLicense(
             dependencyId = "Maven:org.example:error:1.0.0",
             dependencyName = "org.example:error",
@@ -191,7 +191,7 @@ class CachingLicenseResolverTest {
             spdxId = "GPL-3.0-only"
         )
 
-        every { mockCache.getCachedResolution(any(), any()) } throws RuntimeException("Cache error")
+        coEvery { mockCache.getCachedResolution(any(), any()) } throws RuntimeException("Cache error")
         coEvery { mockDelegate.resolveLicense(any()) } returns suggestion
 
         // Should not throw, should fall back to delegate
@@ -202,7 +202,7 @@ class CachingLicenseResolverTest {
     }
 
     @Test
-    fun `should handle cache write exception gracefully`() = runBlocking {
+    fun `should handle cache write exception gracefully`() = runTest {
         val unresolved = UnresolvedLicense(
             dependencyId = "Maven:org.example:writeerror:1.0.0",
             dependencyName = "org.example:writeerror",
@@ -216,9 +216,9 @@ class CachingLicenseResolverTest {
             spdxId = "LGPL-2.1-only"
         )
 
-        every { mockCache.getCachedResolution(any(), any()) } returns null
+        coEvery { mockCache.getCachedResolution(any(), any()) } returns null
         coEvery { mockDelegate.resolveLicense(any()) } returns suggestion
-        every { mockCache.cacheResolution(any(), any(), any(), any()) } throws RuntimeException("Write error")
+        coEvery { mockCache.cacheResolution(any(), any(), any(), any()) } throws RuntimeException("Write error")
 
         // Should not throw, should return result despite cache write failure
         val result = cachingResolver.resolveLicense(unresolved)
@@ -228,7 +228,7 @@ class CachingLicenseResolverTest {
     }
 
     @Test
-    fun `resolveLicenseDirect should bypass cache`() = runBlocking {
+    fun `resolveLicenseDirect should bypass cache`() = runTest {
         val unresolved = UnresolvedLicense(
             dependencyId = "Maven:org.example:direct:1.0.0",
             dependencyName = "org.example:direct",
@@ -250,8 +250,8 @@ class CachingLicenseResolverTest {
         assertEquals("ISC", result.suggestedLicense)
 
         // Verify cache was NOT accessed
-        verify(exactly = 0) { mockCache.getCachedResolution(any(), any()) }
-        verify(exactly = 0) { mockCache.cacheResolution(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { mockCache.getCachedResolution(any(), any()) }
+        coVerify(exactly = 0) { mockCache.cacheResolution(any(), any(), any(), any()) }
     }
 
     @Test

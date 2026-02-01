@@ -90,6 +90,20 @@ data class ObligationSource(
     val scope: ObligationScope
 )
 
+/**
+ * Obligation with distribution scope context (EU compliance)
+ */
+@Serializable
+data class ObligationWithDistribution(
+    val obligation: ObligationNode,
+    val scope: ObligationScope,
+    val trigger: TriggerCondition,
+    val distributionScope: String,  // INTERNAL, BINARY, SOURCE, SAAS, EMBEDDED
+    val adjustedEffort: EffortLevel,
+    val isApplicable: Boolean,
+    val applicabilityReason: String
+)
+
 // =============================================================================
 // Dependency Tree Analysis
 // =============================================================================

@@ -4,6 +4,7 @@ plugins {
 
 val ktorVersion: String by rootProject.extra
 val exposedVersion: String by rootProject.extra
+val coroutinesVersion: String by rootProject.extra
 
 dependencies {
     implementation(project(":core")) {
@@ -49,6 +50,7 @@ dependencies {
     testImplementation("io.mockk:mockk:1.13.12")
     testImplementation("org.testcontainers:postgresql:1.19.8")
     testImplementation("org.testcontainers:junit-jupiter:1.19.8")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:$coroutinesVersion")
 }
 
 application {

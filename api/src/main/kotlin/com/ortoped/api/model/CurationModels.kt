@@ -411,3 +411,434 @@ data class CurationFilterOptions(
     val sortBy: String = "priority", // priority, name, status, confidence
     val sortOrder: String = "desc" // asc, desc
 )
+
+// ============================================================================
+// EU COMPLIANCE MODELS (Phase 10)
+// ============================================================================
+
+/**
+ * Enhanced curation item response with EU compliance fields
+ */
+@Serializable
+data class EnhancedCurationItemResponse(
+    val id: String,
+    val dependencyId: String,
+    val dependencyName: String,
+    val dependencyVersion: String,
+    val scope: String?,
+
+    // License info
+    val declaredLicenses: List<String>,
+    val detectedLicenses: List<String>,
+    val originalConcludedLicense: String?,
+
+    // AI suggestion
+    val aiSuggestion: AiSuggestionDetail? = null,
+
+    // Curation status
+    val status: String,
+    val curatedLicense: String? = null,
+    val curatorComment: String? = null,
+    val curatorId: String? = null,
+    val curatedAt: String? = null,
+
+    // Priority
+    val priority: PriorityInfo? = null,
+
+    // SPDX validation
+    val spdxValidated: Boolean = false,
+    val spdxLicense: SpdxLicenseInfo? = null,
+
+    // EU Compliance fields
+    val requiresJustification: Boolean = true,
+    val justificationComplete: Boolean = false,
+    val justification: JustificationResponse? = null,
+    val blockingPolicyRule: PolicyRuleReference? = null,
+    val isOrLicense: Boolean = false,
+    val orLicenseOptions: List<String>? = null,
+    val orLicenseChoice: String? = null,
+    val distributionScope: String = "BINARY",
+
+    // Inline explanations for UI
+    val explanations: CurationExplanationsResponse? = null
+)
+
+/**
+ * Structured justification response
+ */
+@Serializable
+data class JustificationResponse(
+    val id: String,
+    val spdxId: String,
+    val licenseCategory: String,
+    val concludedLicense: String,
+    val justificationType: String,
+    val justificationText: String,
+    val policyRuleId: String? = null,
+    val policyRuleName: String? = null,
+    val evidenceType: String? = null,
+    val evidenceReference: String? = null,
+    val distributionScope: String,
+    val curatorId: String,
+    val curatorName: String? = null,
+    val curatedAt: String,
+    val justificationHash: String? = null
+)
+
+/**
+ * Reference to a blocking policy rule
+ */
+@Serializable
+data class PolicyRuleReference(
+    val ruleId: String,
+    val ruleName: String,
+    val severity: String
+)
+
+/**
+ * Curation explanations for UI ("Why Not?" + obligations + compatibility)
+ */
+@Serializable
+data class CurationExplanationsResponse(
+    val dependencyId: String,
+    val whyNotExplanations: List<WhyNotExplanation> = emptyList(),
+    val triggeredObligations: List<ObligationInfo> = emptyList(),
+    val compatibilityIssues: List<CompatibilityIssue> = emptyList(),
+    val resolutions: List<ResolutionOption> = emptyList()
+)
+
+/**
+ * "Why Not?" explanation for a policy violation
+ */
+@Serializable
+data class WhyNotExplanation(
+    val policyRuleId: String,
+    val policyRuleName: String,
+    val severity: String, // ERROR, WARNING, INFO
+    val explanation: String,
+    val whatItMeans: String,
+    val howToFix: String,
+    val affectedLicense: String? = null
+)
+
+/**
+ * License obligation information
+ */
+@Serializable
+data class ObligationInfo(
+    val name: String,
+    val description: String,
+    val trigger: String, // e.g., "Distribution", "Modification"
+    val effortLevel: String, // LOW, MEDIUM, HIGH
+    val appliesToScopes: List<String> // Which distribution scopes
+)
+
+/**
+ * Compatibility issue with another dependency
+ */
+@Serializable
+data class CompatibilityIssue(
+    val otherDependencyId: String,
+    val otherDependencyName: String,
+    val otherLicense: String,
+    val currentLicense: String,
+    val compatibilityLevel: String, // FULL, CONDITIONAL, INCOMPATIBLE, UNKNOWN
+    val reason: String,
+    val recommendation: String? = null
+)
+
+/**
+ * Resolution option for fixing an issue
+ */
+@Serializable
+data class ResolutionOption(
+    val type: String, // REPLACE_DEPENDENCY, ADD_EXCEPTION, CHANGE_DISTRIBUTION, SELECT_OR_LICENSE
+    val description: String,
+    val effort: String, // LOW, MEDIUM, HIGH
+    val steps: List<String> = emptyList()
+)
+
+/**
+ * Request to submit structured justification
+ */
+@Serializable
+data class JustificationRequest(
+    val spdxId: String,
+    val licenseCategory: String,
+    val concludedLicense: String,
+    val justificationType: String, // AI_ACCEPTED, MANUAL_OVERRIDE, EVIDENCE_BASED, POLICY_EXEMPTION
+    val justificationText: String,
+    val policyRuleId: String? = null,
+    val policyRuleName: String? = null,
+    val evidenceType: String? = null, // LICENSE_FILE, REPO_INSPECTION, VENDOR_CONFIRMATION, LEGAL_OPINION
+    val evidenceReference: String? = null,
+    val distributionScope: String = "BINARY"
+)
+
+/**
+ * Request to submit curation with justification (combined)
+ */
+@Serializable
+data class CurationWithJustificationRequest(
+    val action: String, // ACCEPT, REJECT, MODIFY
+    val license: String? = null, // Required for REJECT/MODIFY
+    val comment: String? = null,
+    val justification: JustificationRequest? = null // Required for non-permissive
+)
+
+/**
+ * Request to submit session for approval (two-role workflow)
+ */
+@Serializable
+data class SubmitForApprovalRequest(
+    val comment: String? = null
+)
+
+/**
+ * Request for approver to decide on session
+ */
+@Serializable
+data class ApprovalDecisionRequest(
+    val decision: String, // APPROVED, REJECTED, RETURNED
+    val comment: String? = null,
+    val returnReason: String? = null,
+    val revisionItems: List<String>? = null // Item IDs needing revision
+)
+
+/**
+ * Response for session approval status
+ */
+@Serializable
+data class ApprovalStatusResponse(
+    val sessionId: String,
+    val isSubmittedForApproval: Boolean,
+    val submittedBy: String? = null,
+    val submittedAt: String? = null,
+    val approval: ApprovalRecordResponse? = null,
+    val readiness: ApprovalReadinessResponse? = null
+)
+
+/**
+ * Approval record response
+ */
+@Serializable
+data class ApprovalRecordResponse(
+    val id: String,
+    val submitterId: String,
+    val submitterName: String?,
+    val submittedAt: String,
+    val approverId: String?,
+    val approverName: String?,
+    val approverRole: String?,
+    val decision: String?,
+    val decisionComment: String?,
+    val decidedAt: String?,
+    val returnReason: String?,
+    val revisionItems: List<String>?
+)
+
+/**
+ * Approval readiness check response
+ */
+@Serializable
+data class ApprovalReadinessResponse(
+    val isReady: Boolean,
+    val totalItems: Int,
+    val pendingItems: Int,
+    val unresolvedOrLicenses: Int,
+    val pendingJustifications: Int,
+    val blockers: List<ApprovalBlockerInfo> = emptyList()
+)
+
+/**
+ * Information about what blocks approval
+ */
+@Serializable
+data class ApprovalBlockerInfo(
+    val type: String, // PENDING_ITEMS, UNRESOLVED_OR, MISSING_JUSTIFICATION
+    val count: Int,
+    val message: String,
+    val affectedItems: List<String> = emptyList()
+)
+
+// ============================================================================
+// OR LICENSE MODELS
+// ============================================================================
+
+/**
+ * List of unresolved OR licenses
+ */
+@Serializable
+data class OrLicensesResponse(
+    val orLicenses: List<OrLicenseItemResponse>,
+    val total: Int,
+    val resolved: Int,
+    val unresolved: Int
+)
+
+/**
+ * Single OR license item
+ */
+@Serializable
+data class OrLicenseItemResponse(
+    val curationId: String,
+    val dependencyId: String,
+    val dependencyName: String,
+    val dependencyVersion: String,
+    val originalExpression: String,
+    val options: List<OrLicenseOptionResponse>,
+    val isResolved: Boolean,
+    val chosenLicense: String? = null,
+    val choiceReason: String? = null,
+    val resolvedBy: String? = null,
+    val resolvedAt: String? = null
+)
+
+/**
+ * Single OR license option with analysis
+ */
+@Serializable
+data class OrLicenseOptionResponse(
+    val license: String,
+    val category: String, // PERMISSIVE, WEAK_COPYLEFT, etc.
+    val isOsiApproved: Boolean,
+    val isFsfLibre: Boolean,
+    val policyCompliant: Boolean,
+    val recommendation: String? = null // "Recommended", "Not Recommended", null
+)
+
+/**
+ * Request to resolve an OR license
+ */
+@Serializable
+data class ResolveOrLicenseRequest(
+    val chosenLicense: String,
+    val choiceReason: String
+)
+
+// ============================================================================
+// AUDIT LOG MODELS
+// ============================================================================
+
+/**
+ * Audit log entry response
+ */
+@Serializable
+data class AuditLogEntryResponse(
+    val id: String,
+    val entityType: String,
+    val entityId: String,
+    val action: String,
+    val actorId: String,
+    val actorRole: String,
+    val changeSummary: String,
+    val previousState: String? = null, // JSON string
+    val newState: String, // JSON string
+    val createdAt: String
+)
+
+/**
+ * Audit log list response
+ */
+@Serializable
+data class AuditLogListResponse(
+    val entries: List<AuditLogEntryResponse>,
+    val total: Int,
+    val page: Int,
+    val pageSize: Int
+)
+
+/**
+ * Audit log filter options
+ */
+@Serializable
+data class AuditLogFilterOptions(
+    val entityType: String? = null,
+    val entityId: String? = null,
+    val actorId: String? = null,
+    val action: String? = null,
+    val startDate: String? = null,
+    val endDate: String? = null
+)
+
+// ============================================================================
+// ENHANCED SESSION RESPONSE
+// ============================================================================
+
+/**
+ * Enhanced curation session response with EU compliance fields
+ */
+@Serializable
+data class EnhancedCurationSessionResponse(
+    val id: String,
+    val scanId: String,
+    val status: String,
+    val statistics: CurationStatistics,
+    val approval: CurationApproval? = null,
+
+    // EU Compliance fields
+    val submittedForApproval: Boolean = false,
+    val submittedAt: String? = null,
+    val submittedBy: String? = null,
+    val approvalRecord: ApprovalRecordResponse? = null,
+    val readiness: ApprovalReadinessResponse? = null,
+
+    // OR license summary
+    val orLicenseSummary: OrLicenseSummary? = null,
+
+    val createdAt: String,
+    val updatedAt: String
+)
+
+/**
+ * OR license summary for session view
+ */
+@Serializable
+data class OrLicenseSummary(
+    val total: Int,
+    val resolved: Int,
+    val unresolved: Int
+)
+
+// ============================================================================
+// EXPORT MODELS
+// ============================================================================
+
+/**
+ * Export format options
+ */
+@Serializable
+data class ExportRequest(
+    val format: String = "curations-yaml", // curations-yaml, notice, both
+    val includeApprovalInfo: Boolean = true,
+    val includeJustifications: Boolean = true
+)
+
+/**
+ * Export response
+ */
+@Serializable
+data class ExportResponse(
+    val content: String,
+    val format: String,
+    val filename: String,
+    val generatedAt: String
+)
+
+/**
+ * Curations YAML export response (ORT compatible)
+ */
+@Serializable
+data class CurationsYamlResponse(
+    val yaml: String,
+    val filename: String = "curations.yml"
+)
+
+/**
+ * NOTICE file export response
+ */
+@Serializable
+data class NoticeFileResponse(
+    val content: String,
+    val filename: String = "NOTICE"
+)

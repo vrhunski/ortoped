@@ -3,9 +3,10 @@ package com.ortoped.api.adapter
 import com.ortoped.api.repository.CachedLicenseResolution
 import com.ortoped.api.repository.OrtCacheRepository
 import com.ortoped.core.model.LicenseSuggestion
-import io.mockk.every
+import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
-import io.mockk.verify
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
@@ -24,7 +25,7 @@ class LicenseResolutionCacheAdapterTest {
     }
 
     @Test
-    fun `getCachedResolution should return CachedResolution when found`() {
+    fun `getCachedResolution should return CachedResolution when found`() = runTest {
         val cachedInDb = CachedLicenseResolution(
             packageId = "Maven:org.example:lib:1.0.0",
             declaredLicenseRaw = "MIT License",
@@ -34,7 +35,7 @@ class LicenseResolutionCacheAdapterTest {
             reasoning = "Exact match"
         )
 
-        every {
+        coEvery {
             mockRepository.getCachedResolution("Maven:org.example:lib:1.0.0", "MIT License")
         } returns cachedInDb
 
@@ -50,8 +51,8 @@ class LicenseResolutionCacheAdapterTest {
     }
 
     @Test
-    fun `getCachedResolution should return null when not found`() {
-        every {
+    fun `getCachedResolution should return null when not found`() = runTest {
+        coEvery {
             mockRepository.getCachedResolution(any(), any())
         } returns null
 
@@ -61,7 +62,7 @@ class LicenseResolutionCacheAdapterTest {
     }
 
     @Test
-    fun `getCachedResolution should handle null declared license`() {
+    fun `getCachedResolution should handle null declared license`() = runTest {
         val cachedInDb = CachedLicenseResolution(
             packageId = "Maven:org.example:noLicense:1.0.0",
             declaredLicenseRaw = null,
@@ -70,7 +71,7 @@ class LicenseResolutionCacheAdapterTest {
             confidence = "MEDIUM"
         )
 
-        every {
+        coEvery {
             mockRepository.getCachedResolution("Maven:org.example:noLicense:1.0.0", null)
         } returns cachedInDb
 
@@ -82,7 +83,7 @@ class LicenseResolutionCacheAdapterTest {
     }
 
     @Test
-    fun `getCachedResolution should handle missing resolution source`() {
+    fun `getCachedResolution should handle missing resolution source`() = runTest {
         val cachedInDb = CachedLicenseResolution(
             packageId = "Maven:org.example:legacy:1.0.0",
             resolvedSpdxId = "GPL-3.0",
@@ -90,7 +91,7 @@ class LicenseResolutionCacheAdapterTest {
             confidence = "HIGH"
         )
 
-        every {
+        coEvery {
             mockRepository.getCachedResolution("Maven:org.example:legacy:1.0.0", null)
         } returns cachedInDb
 
@@ -101,7 +102,7 @@ class LicenseResolutionCacheAdapterTest {
     }
 
     @Test
-    fun `cacheResolution should store resolution via repository`() {
+    fun `cacheResolution should store resolution via repository`() = runTest {
         val suggestion = LicenseSuggestion(
             suggestedLicense = "BSD-3-Clause License",
             confidence = "HIGH",
@@ -117,7 +118,7 @@ class LicenseResolutionCacheAdapterTest {
             source = "AI"
         )
 
-        verify {
+        coVerify {
             mockRepository.cacheResolution(match { cached ->
                 cached.packageId == "Maven:org.example:new:1.0.0" &&
                 cached.declaredLicenseRaw == "BSD 3-Clause" &&
@@ -130,7 +131,7 @@ class LicenseResolutionCacheAdapterTest {
     }
 
     @Test
-    fun `cacheResolution should use suggestedLicense when spdxId is null`() {
+    fun `cacheResolution should use suggestedLicense when spdxId is null`() = runTest {
         val suggestion = LicenseSuggestion(
             suggestedLicense = "Custom License",
             confidence = "LOW",
@@ -146,7 +147,7 @@ class LicenseResolutionCacheAdapterTest {
             source = "AI"
         )
 
-        verify {
+        coVerify {
             mockRepository.cacheResolution(match { cached ->
                 cached.resolvedSpdxId == "Custom License"
             })
@@ -154,7 +155,7 @@ class LicenseResolutionCacheAdapterTest {
     }
 
     @Test
-    fun `cacheResolution should handle null declared license`() {
+    fun `cacheResolution should handle null declared license`() = runTest {
         val suggestion = LicenseSuggestion(
             suggestedLicense = "MIT",
             confidence = "MEDIUM",
@@ -169,7 +170,7 @@ class LicenseResolutionCacheAdapterTest {
             source = "AI"
         )
 
-        verify {
+        coVerify {
             mockRepository.cacheResolution(match { cached ->
                 cached.packageId == "Maven:org.example:inferred:1.0.0" &&
                 cached.declaredLicenseRaw == null &&
@@ -179,7 +180,7 @@ class LicenseResolutionCacheAdapterTest {
     }
 
     @Test
-    fun `cacheResolution should use provided source`() {
+    fun `cacheResolution should use provided source`() = runTest {
         val suggestion = LicenseSuggestion(
             suggestedLicense = "Apache-2.0",
             confidence = "HIGH",
@@ -194,7 +195,7 @@ class LicenseResolutionCacheAdapterTest {
             source = "SPDX_MATCH"
         )
 
-        verify {
+        coVerify {
             mockRepository.cacheResolution(match { cached ->
                 cached.resolutionSource == "SPDX_MATCH"
             })

@@ -107,6 +107,9 @@ class PolicyService(
             throw BadRequestException("Scan is not complete. Current status: ${scan.status}")
         }
 
+        // Policy check runs BEFORE curation
+        // Workflow: SCAN → POLICY CHECK → CURATION → EU COMPLIANCE REPORT
+
         val resultJson = scan.result
             ?: throw NotFoundException("Scan result not available")
 

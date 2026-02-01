@@ -241,14 +241,21 @@ class ScanService(
                                !request.demoMode &&
                                cachingAnalyzer != null
                 val effectiveUrl = repositoryUrl
-                val effectiveRevision = request.commit ?: request.tag ?: request.branch
-
-                val scanner = if (useCache && cachingAnalyzer != null) {
-                    logger.info { "Using caching analyzer wrapper" }
-                    SimpleScannerWrapper(sourceCodeScanner)  // Caching happens at result level
-                } else {
-                    SimpleScannerWrapper(sourceCodeScanner)
+                
+                // Get revision from request, or detect from cloned repository
+                val effectiveRevision = request.commit 
+                    ?: request.tag 
+                    ?: request.branch 
+                    ?: cachingAnalyzer?.detectGitRevision(projectDir)
+                
+                // Log caching status for debugging
+                logger.info { "Cache configuration: useCache=$useCache, effectiveUrl=$effectiveUrl, effectiveRevision=$effectiveRevision" }
+                if (!useCache) {
+                    logger.info { "Caching disabled: useCache=${request.useCache}, forceRescan=${request.forceRescan}, demoMode=${request.demoMode}, cachingAnalyzer=${cachingAnalyzer != null}" }
                 }
+
+                // Create scanner - use caching wrapper if available and caching is enabled
+                val scanner = SimpleScannerWrapper(sourceCodeScanner)
 
                 val orchestrator = ScanOrchestrator(
                     scanner = scanner,
@@ -257,31 +264,40 @@ class ScanService(
                     licenseResolutionCache = ortCacheRepository?.let { LicenseResolutionCacheAdapter(it) }
                 )
 
+                // Build scan configuration for cache key generation
+                val scanConfig = ScanConfiguration(
+                    allowDynamicVersions = request.allowDynamicVersions,
+                    skipExcluded = request.skipExcluded,
+                    disabledPackageManagers = request.disabledPackageManagers,
+                    enableSourceScan = request.enableSourceScan,
+                    enableAi = request.enableAi,
+                    enableSpdx = effectiveEnableSpdx,
+                    useCache = useCache,
+                    cacheTtlHours = request.cacheTtlHours ?: 168,
+                    forceRescan = request.forceRescan ?: false
+                )
+
                 // Check cache first if caching is enabled
                 var scanResult: ScanResult? = null
-                if (useCache && effectiveUrl != null && effectiveRevision != null) {
-                    val configHash = cachingAnalyzer!!.generateConfigHash(
-                        ScanConfiguration(
-                            allowDynamicVersions = request.allowDynamicVersions,
-                            skipExcluded = request.skipExcluded,
-                            disabledPackageManagers = request.disabledPackageManagers,
-                            enableSourceScan = request.enableSourceScan,
-                            enableAi = request.enableAi,
-                            enableSpdx = effectiveEnableSpdx
-                        )
-                    )
+                if (useCache && effectiveUrl != null && effectiveRevision != null && cachingAnalyzer != null) {
+                    val configHash = cachingAnalyzer.generateConfigHash(scanConfig)
 
-                    val cached = ortCacheRepository?.getCachedScanResult(effectiveUrl, effectiveRevision, configHash)
-                    if (cached != null) {
-                        logger.info { "Cache HIT for scan result: $effectiveUrl@$effectiveRevision" }
-                        scanResult = cachingAnalyzer.decompressAndDeserialize(cached)
-                    } else {
-                        logger.info { "Cache MISS for scan result: $effectiveUrl@$effectiveRevision" }
+                    try {
+                        val cached = ortCacheRepository?.getCachedScanResult(effectiveUrl, effectiveRevision, configHash)
+                        if (cached != null) {
+                            logger.info { "PostgreSQL Cache HIT for scan result: $effectiveUrl@$effectiveRevision (configHash: $configHash)" }
+                            scanResult = cachingAnalyzer.decompressAndDeserialize(cached)
+                        } else {
+                            logger.info { "PostgreSQL Cache MISS for scan result: $effectiveUrl@$effectiveRevision (configHash: $configHash)" }
+                        }
+                    } catch (e: Exception) {
+                        logger.warn { "Cache lookup failed: ${e.message}" }
                     }
                 }
 
                 // Run scan if not cached
                 if (scanResult == null) {
+                    logger.info { "Performing fresh scan for project: ${projectDir.name}" }
                     scanResult = orchestrator.scanWithAiEnhancement(
                         projectDir = projectDir,
                         enableAiResolution = request.enableAi,
@@ -297,16 +313,7 @@ class ScanService(
                     // Store in cache if caching is enabled
                     if (useCache && effectiveUrl != null && effectiveRevision != null && cachingAnalyzer != null) {
                         try {
-                            val configHash = cachingAnalyzer.generateConfigHash(
-                                ScanConfiguration(
-                                    allowDynamicVersions = request.allowDynamicVersions,
-                                    skipExcluded = request.skipExcluded,
-                                    disabledPackageManagers = request.disabledPackageManagers,
-                                    enableSourceScan = request.enableSourceScan,
-                                    enableAi = request.enableAi,
-                                    enableSpdx = effectiveEnableSpdx
-                                )
-                            )
+                            val configHash = cachingAnalyzer.generateConfigHash(scanConfig)
                             val compressed = cachingAnalyzer.compressAndSerialize(scanResult)
                             ortCacheRepository?.cacheScanResult(
                                 projectUrl = effectiveUrl,
@@ -318,11 +325,13 @@ class ScanService(
                                 issueCount = scanResult.warnings?.size ?: 0,
                                 ttlHours = request.cacheTtlHours ?: 168  // 1 week default
                             )
-                            logger.info { "Cached scan result: ${scanResult.dependencies.size} packages" }
+                            logger.info { "PostgreSQL Cache STORED: ${scanResult.dependencies.size} packages, configHash: $configHash" }
                         } catch (e: Exception) {
                             logger.warn { "Failed to cache scan result: ${e.message}" }
                         }
                     }
+                } else {
+                    logger.info { "Using cached scan result with ${scanResult.dependencies.size} dependencies" }
                 }
 
                 // Store result

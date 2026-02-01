@@ -14,7 +14,7 @@ interface LicenseResolutionCache {
      * @param declaredLicense The original declared license string (can be null)
      * @return Cached resolution if found, null otherwise
      */
-    fun getCachedResolution(packageId: String, declaredLicense: String?): CachedResolution?
+    suspend fun getCachedResolution(packageId: String, declaredLicense: String?): CachedResolution?
 
     /**
      * Cache a license resolution result.
@@ -24,7 +24,7 @@ interface LicenseResolutionCache {
      * @param resolution The resolved license suggestion
      * @param source The resolution source (e.g., "AI", "SPDX_MATCH")
      */
-    fun cacheResolution(
+    suspend fun cacheResolution(
         packageId: String,
         declaredLicense: String?,
         resolution: LicenseSuggestion,

@@ -145,5 +145,40 @@ fun Route.reportRoutes(reportService: ReportService) {
             // Return the full response object so frontend can extract content and filename
             call.respond(HttpStatusCode.OK, export)
         }
+
+        /**
+         * Generate EU Compliance Report
+         * GET /scans/{scanId}/reports/eu-compliance
+         *
+         * This report is designed for EU/German regulatory requirements and includes:
+         * - Complete audit trail of all actions
+         * - Structured justifications for all license decisions
+         * - Two-role approval chain (curator and approver)
+         * - OR license resolution documentation
+         * - Distribution scope for each dependency
+         *
+         * Note: Curation must be approved before generating this report
+         */
+        get("/eu-compliance") {
+            val scanId = call.parameters["scanId"]
+                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+
+            val format = call.request.queryParameters["format"] ?: "json"
+
+            val report = reportService.generateEuComplianceReport(scanId, format)
+
+            if (format == "html") {
+                call.response.header(
+                    HttpHeaders.ContentDisposition,
+                    ContentDisposition.Attachment.withParameter(
+                        ContentDisposition.Parameters.FileName,
+                        report.filename
+                    ).toString()
+                )
+                call.respondText(report.content, ContentType.Text.Html)
+            } else {
+                call.respond(HttpStatusCode.OK, report)
+            }
+        }
     }
 }

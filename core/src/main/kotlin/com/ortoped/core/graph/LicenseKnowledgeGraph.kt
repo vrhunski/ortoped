@@ -614,6 +614,159 @@ class LicenseKnowledgeGraph {
     }
 
     // =========================================================================
+    // Distribution-Aware Obligations (EU Compliance)
+    // =========================================================================
+
+    /**
+     * Distribution scope for filtering obligations
+     */
+    enum class DistributionScope(val displayName: String) {
+        INTERNAL("Internal Use"),
+        BINARY("Binary Distribution"),
+        SOURCE("Source Distribution"),
+        SAAS("SaaS/Cloud Service"),
+        EMBEDDED("Embedded/Device")
+    }
+
+    /**
+     * Get obligations filtered by distribution scope (EU compliance requirement).
+     * Different distribution types trigger different obligations:
+     * - INTERNAL: Minimal obligations (no distribution)
+     * - BINARY: Standard distribution obligations
+     * - SOURCE: Source disclosure obligations apply
+     * - SAAS: Network copyleft (AGPL) obligations apply
+     * - EMBEDDED: All distribution obligations plus embedded-specific
+     */
+    fun getObligationsForDistribution(
+        licenseId: String,
+        distributionScope: DistributionScope
+    ): List<ObligationWithDistribution> {
+        val normalizedId = licenseId.uppercase()
+        val licenseNode = licenses[normalizedId] ?: return emptyList()
+
+        val allObligations = getObligationsForLicense(normalizedId)
+
+        return allObligations.mapNotNull { obligationWithScope ->
+            val obligation = obligationWithScope.obligation
+            val trigger = obligationWithScope.trigger
+
+            // Determine if obligation applies to this distribution scope
+            val applies = when (distributionScope) {
+                DistributionScope.INTERNAL -> {
+                    // Internal use - only attribution and no-warranty typically apply
+                    trigger in listOf(
+                        TriggerCondition.ALWAYS
+                    )
+                }
+                DistributionScope.BINARY -> {
+                    // Binary distribution - most obligations except source disclosure
+                    trigger in listOf(
+                        TriggerCondition.ALWAYS,
+                        TriggerCondition.ON_DISTRIBUTION,
+                        TriggerCondition.ON_STATIC_LINKING,
+                        TriggerCondition.ON_DYNAMIC_LINKING
+                    )
+                }
+                DistributionScope.SOURCE -> {
+                    // Source distribution - all standard obligations apply
+                    trigger in listOf(
+                        TriggerCondition.ALWAYS,
+                        TriggerCondition.ON_DISTRIBUTION,
+                        TriggerCondition.ON_MODIFICATION,
+                        TriggerCondition.ON_DERIVATIVE,
+                        TriggerCondition.ON_STATIC_LINKING,
+                        TriggerCondition.ON_DYNAMIC_LINKING
+                    )
+                }
+                DistributionScope.SAAS -> {
+                    // SaaS - network copyleft triggers, special handling for AGPL
+                    val isNetworkCopyleft = licenseNode.copyleftStrength == CopyleftStrength.NETWORK
+                    if (isNetworkCopyleft) {
+                        // AGPL: Network distribution triggers source disclosure
+                        true
+                    } else {
+                        // Non-AGPL: SaaS typically exempts from distribution obligations
+                        trigger in listOf(
+                            TriggerCondition.ALWAYS,
+                            TriggerCondition.ON_NETWORK_USE
+                        )
+                    }
+                }
+                DistributionScope.EMBEDDED -> {
+                    // Embedded - all obligations apply plus device-specific concerns
+                    true
+                }
+            }
+
+            if (!applies) return@mapNotNull null
+
+            // Calculate effort adjustment based on scope
+            val adjustedEffort = adjustEffortForScope(obligation.effort, distributionScope, licenseNode)
+
+            ObligationWithDistribution(
+                obligation = obligation,
+                scope = obligationWithScope.scope,
+                trigger = trigger,
+                distributionScope = distributionScope.name,
+                adjustedEffort = adjustedEffort,
+                isApplicable = true,
+                applicabilityReason = getApplicabilityReason(trigger, distributionScope, licenseNode)
+            )
+        }
+    }
+
+    private fun adjustEffortForScope(
+        baseEffort: EffortLevel,
+        distributionScope: DistributionScope,
+        licenseNode: LicenseNode
+    ): EffortLevel {
+        // Adjust effort based on distribution context
+        return when {
+            // Internal use is generally lower effort
+            distributionScope == DistributionScope.INTERNAL -> {
+                when (baseEffort) {
+                    EffortLevel.HIGH -> EffortLevel.MEDIUM
+                    EffortLevel.VERY_HIGH -> EffortLevel.HIGH
+                    else -> baseEffort
+                }
+            }
+            // SaaS with AGPL is highest effort
+            distributionScope == DistributionScope.SAAS &&
+                    licenseNode.copyleftStrength == CopyleftStrength.NETWORK -> EffortLevel.VERY_HIGH
+            // Embedded often requires more effort
+            distributionScope == DistributionScope.EMBEDDED &&
+                    licenseNode.copyleftStrength != CopyleftStrength.NONE -> {
+                when (baseEffort) {
+                    EffortLevel.MEDIUM -> EffortLevel.HIGH
+                    EffortLevel.HIGH -> EffortLevel.VERY_HIGH
+                    else -> baseEffort
+                }
+            }
+            else -> baseEffort
+        }
+    }
+
+    private fun getApplicabilityReason(
+        trigger: TriggerCondition,
+        distributionScope: DistributionScope,
+        licenseNode: LicenseNode
+    ): String {
+        return when {
+            distributionScope == DistributionScope.INTERNAL ->
+                "Applies to internal use (no distribution)"
+            distributionScope == DistributionScope.SAAS &&
+                    licenseNode.copyleftStrength == CopyleftStrength.NETWORK ->
+                "AGPL network disclosure: SaaS users must be able to obtain source code"
+            distributionScope == DistributionScope.EMBEDDED &&
+                    licenseNode.copyleftStrength == CopyleftStrength.STRONG ->
+                "Copyleft applies to embedded devices - must provide source/offer"
+            trigger == TriggerCondition.ON_DISTRIBUTION ->
+                "Triggered by ${distributionScope.displayName.lowercase()}"
+            else -> "Standard license obligation"
+        }
+    }
+
+    // =========================================================================
     // Rights Queries
     // =========================================================================
 

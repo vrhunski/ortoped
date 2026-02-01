@@ -239,7 +239,7 @@ class CacheRoutesTest {
             ))
         }
 
-        val response = client.delete("/cache/package?packageId=$packageId")
+        val response = client.delete("/cache/package?id=$packageId")
 
         assertEquals(HttpStatusCode.OK, response.status)
 
