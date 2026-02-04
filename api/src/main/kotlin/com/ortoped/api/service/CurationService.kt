@@ -7,9 +7,13 @@ import com.ortoped.api.plugins.NotFoundException
 import com.ortoped.api.repository.*
 import com.ortoped.core.model.Dependency
 import com.ortoped.core.model.ScanResult
+import com.ortoped.core.policy.explanation.ExplanationGenerator
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -22,7 +26,8 @@ class CurationService(
     private val curationRepository: CurationRepository,
     private val curationSessionRepository: CurationSessionRepository,
     private val curatedScanRepository: CuratedScanRepository,
-    private val scanRepository: ScanRepository
+    private val scanRepository: ScanRepository,
+    private val licenseGraphService: LicenseGraphService? = null
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -268,6 +273,105 @@ class CurationService(
     }
 
     /**
+     * Add a dependency to curation manually
+     * Used when a policy violation occurs for a dependency not initially in the curation queue
+     */
+    fun addDependencyToCuration(
+        scanId: String,
+        request: AddToCurationRequest,
+        curatorId: String? = null
+    ): AddToCurationResponse {
+        val scanUuid = UUID.fromString(scanId)
+
+        // Get the curation session
+        val session = curationSessionRepository.findByScanId(scanUuid)
+            ?: return AddToCurationResponse(
+                success = false,
+                message = "No curation session found for scan: $scanId. Please start a curation session first."
+            )
+
+        if (session.status == CurationSessionStatus.APPROVED.value) {
+            return AddToCurationResponse(
+                success = false,
+                message = "Cannot add items to an approved curation session"
+            )
+        }
+
+        // Check if dependency is already in curation
+        val existingCuration = curationRepository.findByDependencyId(session.id, request.dependencyId)
+        if (existingCuration != null) {
+            return AddToCurationResponse(
+                success = true,
+                item = existingCuration.toItemResponse(),
+                message = "Dependency is already in the curation queue"
+            )
+        }
+
+        // Get scan result to find the dependency
+        val scanEntity = scanRepository.findById(scanUuid)
+            ?: return AddToCurationResponse(
+                success = false,
+                message = "Scan not found: $scanId"
+            )
+
+        val scanResult = scanEntity.result?.let {
+            try {
+                json.decodeFromString<ScanResult>(it)
+            } catch (e: Exception) {
+                logger.error(e) { "Failed to parse scan result for $scanId" }
+                return AddToCurationResponse(
+                    success = false,
+                    message = "Invalid scan result format"
+                )
+            }
+        } ?: return AddToCurationResponse(
+            success = false,
+            message = "Scan has no result"
+        )
+
+        // Find the dependency in the scan result
+        val dependency = scanResult.dependencies.find { it.id == request.dependencyId }
+            ?: return AddToCurationResponse(
+                success = false,
+                message = "Dependency not found in scan: ${request.dependencyId}"
+            )
+
+        // Calculate priority for this dependency
+        val priority = calculatePriority(dependency)
+
+        // Create the curation item
+        val curation = curationRepository.create(
+            sessionId = session.id,
+            scanId = scanUuid,
+            dependencyId = dependency.id,
+            dependencyName = dependency.name,
+            dependencyVersion = dependency.version,
+            dependencyScope = dependency.scope,
+            originalLicense = dependency.concludedLicense,
+            declaredLicenses = json.encodeToString(dependency.declaredLicenses),
+            detectedLicenses = json.encodeToString(dependency.detectedLicenses),
+            aiSuggestedLicense = dependency.aiSuggestion?.suggestedLicense,
+            aiConfidence = dependency.aiSuggestion?.confidence,
+            aiReasoning = dependency.aiSuggestion?.reasoning,
+            aiAlternatives = dependency.aiSuggestion?.alternatives?.let { json.encodeToString(it) },
+            priorityLevel = priority.level,
+            priorityScore = priority.score,
+            priorityFactors = json.encodeToString(priority.factors)
+        )
+
+        // Update session statistics
+        curationSessionRepository.recalculateStatistics(session.id, curationRepository)
+
+        logger.info { "Manually added dependency ${dependency.name} to curation session for scan $scanId. Reason: ${request.reason ?: "Policy violation"}" }
+
+        return AddToCurationResponse(
+            success = true,
+            item = curation.toItemResponse(),
+            message = "Successfully added ${dependency.name} to curation queue"
+        )
+    }
+
+    /**
      * Submit a curation decision
      */
     fun submitDecision(
@@ -327,8 +431,75 @@ class CurationService(
 
         logger.info { "Curation decision for $dependencyId: $status -> $license" }
 
+        // Validate SPDX and update license info
+        val updatedCuration = curationRepository.findByDependencyId(session.id, dependencyId)
+            ?: throw InternalException("Failed to retrieve updated curation")
+
+        validateAndUpdateSpdxInfo(updatedCuration.id, license)
+
         return curationRepository.findByDependencyId(session.id, dependencyId)?.toItemResponse()
             ?: throw InternalException("Failed to retrieve updated curation")
+    }
+
+    /**
+     * Public method to validate SPDX for a curation item
+     * Returns the updated curation item with SPDX info
+     */
+    fun validateSpdxForItem(scanId: String, dependencyId: String): CurationItemResponse {
+        val scanUuid = UUID.fromString(scanId)
+        val session = curationSessionRepository.findByScanId(scanUuid)
+            ?: throw NotFoundException("No curation session found for scan: $scanId")
+
+        val curation = curationRepository.findByDependencyId(session.id, dependencyId)
+            ?: throw NotFoundException("Curation item not found: $dependencyId")
+
+        // Get the license to validate
+        val licenseToValidate = curation.curatedLicense
+            ?: curation.aiSuggestedLicense
+            ?: curation.originalLicense
+            ?: throw BadRequestException("No license to validate for this item")
+
+        validateAndUpdateSpdxInfo(curation.id, licenseToValidate)
+
+        return curationRepository.findByDependencyId(session.id, dependencyId)?.toItemResponse()
+            ?: throw InternalException("Failed to retrieve updated curation")
+    }
+
+    /**
+     * Validate a license against the SPDX knowledge graph and update the curation item
+     */
+    private fun validateAndUpdateSpdxInfo(curationId: UUID, license: String) {
+        if (licenseGraphService == null) {
+            logger.debug { "License graph service not available, skipping SPDX validation" }
+            return
+        }
+
+        try {
+            val normalizedLicense = license.uppercase().replace(" ", "-")
+            // Use runBlocking to call the suspend getLicense which ensures the graph is initialized
+            val licenseNode = runBlocking { licenseGraphService.getLicense(normalizedLicense) }
+
+            if (licenseNode != null) {
+                val spdxInfo = SpdxLicenseInfo(
+                    licenseId = licenseNode.spdxId,
+                    name = licenseNode.name,
+                    isOsiApproved = licenseNode.isOsiApproved,
+                    isFsfLibre = licenseNode.isFsfFree,
+                    isDeprecated = licenseNode.isDeprecated,
+                    seeAlso = licenseNode.seeAlso
+                )
+                val spdxJson = json.encodeToString(spdxInfo)
+                curationRepository.updateSpdxValidation(curationId, true, spdxJson)
+                logger.debug { "SPDX validated: $license -> ${licenseNode.spdxId}" }
+            } else {
+                // License not found in graph - mark as not validated
+                curationRepository.updateSpdxValidation(curationId, false, null)
+                logger.debug { "SPDX not found: $license" }
+            }
+        } catch (e: Exception) {
+            logger.warn(e) { "Failed to validate SPDX for license: $license" }
+            curationRepository.updateSpdxValidation(curationId, false, null)
+        }
     }
 
     /**
@@ -707,6 +878,10 @@ class CurationService(
             try { json.decodeFromString<List<PriorityFactor>>(it) } catch (e: Exception) { emptyList() }
         } ?: emptyList()
 
+        val spdxLicenseInfo = spdxLicenseData?.let {
+            try { json.decodeFromString<SpdxLicenseInfo>(it) } catch (e: Exception) { null }
+        }
+
         return CurationItemResponse(
             id = id.toString(),
             dependencyId = dependencyId,
@@ -734,7 +909,7 @@ class CurationService(
                 PriorityInfo(priorityLevel, priorityScore, priorityFactors)
             } else null,
             spdxValidated = spdxValidated,
-            spdxLicense = null // TODO: Add SPDX data if validated
+            spdxLicense = spdxLicenseInfo
         )
     }
 
@@ -791,11 +966,11 @@ class CurationService(
         }
 
         // Log previous state for audit
-        val previousState = json.encodeToString(mapOf(
-            "status" to curation.status,
-            "curatedLicense" to curation.curatedLicense,
-            "curatorId" to curation.curatorId
-        ))
+        val previousState = buildJsonObject {
+            put("status", curation.status)
+            put("curatedLicense", curation.curatedLicense ?: "")
+            put("curatorId", curation.curatorId ?: "")
+        }.toString()
 
         // Update the curation with EU compliance fields
         curationRepository.updateDecisionWithCompliance(
@@ -828,12 +1003,12 @@ class CurationService(
             actorId = curatorId,
             actorRole = "CURATOR",
             previousState = previousState,
-            newState = json.encodeToString(mapOf(
-                "status" to status.value,
-                "curatedLicense" to license,
-                "curatorId" to curatorId,
-                "hasJustification" to (request.justification != null)
-            )),
+            newState = buildJsonObject {
+                put("status", status.value)
+                put("curatedLicense", license)
+                put("curatorId", curatorId ?: "")
+                put("hasJustification", request.justification != null)
+            }.toString(),
             changeSummary = "Decision: $status with license $license"
         )
 
@@ -847,6 +1022,9 @@ class CurationService(
         }
 
         logger.info { "EU Curation decision for $dependencyId: $status -> $license (justification: ${request.justification != null})" }
+
+        // Validate SPDX and update license info
+        validateAndUpdateSpdxInfo(curation.id, license)
 
         return getEnhancedCurationItem(scanId, dependencyId)
     }
@@ -976,10 +1154,10 @@ class CurationService(
             actorId = submitterId,
             actorRole = "CURATOR",
             previousState = null,
-            newState = json.encodeToString(mapOf(
-                "submittedForApproval" to true,
-                "submitterId" to submitterId
-            )),
+            newState = buildJsonObject {
+                put("submittedForApproval", true)
+                put("submitterId", submitterId)
+            }.toString(),
             changeSummary = "Session submitted for approval by $submitterId"
         )
 
@@ -1047,11 +1225,11 @@ class CurationService(
             actorId = approverId,
             actorRole = "APPROVER",
             previousState = null,
-            newState = json.encodeToString(mapOf(
-                "decision" to request.decision,
-                "approverId" to approverId,
-                "comment" to request.comment
-            )),
+            newState = buildJsonObject {
+                put("decision", request.decision)
+                put("approverId", approverId)
+                put("comment", request.comment ?: "")
+            }.toString(),
             changeSummary = "Approval decision: ${request.decision} by $approverId"
         )
 
@@ -1171,10 +1349,10 @@ class CurationService(
             actorId = curatorId,
             actorRole = "CURATOR",
             previousState = null,
-            newState = json.encodeToString(mapOf(
-                "chosenLicense" to request.chosenLicense,
-                "reason" to request.choiceReason
-            )),
+            newState = buildJsonObject {
+                put("chosenLicense", request.chosenLicense)
+                put("reason", request.choiceReason ?: "")
+            }.toString(),
             changeSummary = "OR license resolved: chose ${request.chosenLicense}"
         )
 
@@ -1206,16 +1384,392 @@ class CurationService(
 
     /**
      * Get explanations for a curation item ("Why Not?" + obligations + compatibility)
+     * Uses the License Knowledge Graph to provide rich contextual information
      */
     fun getExplanationsForCuration(scanId: String, dependencyId: String): CurationExplanationsResponse {
-        // This integrates with ExplanationGenerator from core module
-        // For now, return placeholder - will be filled in when integrating with knowledge graph
+        val scanUuid = UUID.fromString(scanId)
+        val session = curationSessionRepository.findByScanId(scanUuid)
+            ?: throw NotFoundException("No curation session found for scan: $scanId")
+
+        val curation = curationRepository.findByDependencyId(session.id, dependencyId)
+            ?: throw NotFoundException("Curation item not found: $dependencyId")
+
+        // Get the license to analyze
+        val license = curation.curatedLicense
+            ?: curation.aiSuggestedLicense
+            ?: curation.originalLicense
+            ?: return CurationExplanationsResponse(
+                dependencyId = dependencyId,
+                whyNotExplanations = listOf(
+                    WhyNotExplanation(
+                        type = "UNKNOWN_LICENSE",
+                        title = "🔴 Unknown or Missing License",
+                        summary = "This dependency has no license information available.",
+                        details = listOf(
+                            "No license was declared, detected, or suggested by AI",
+                            "Using software without a clear license is a legal risk",
+                            "Manual investigation is required to determine the actual license"
+                        ),
+                        riskLevel = 5
+                    )
+                ),
+                triggeredObligations = emptyList(),
+                compatibilityIssues = emptyList(),
+                resolutions = listOf(
+                    ResolutionSuggestion(
+                        type = "INVESTIGATE",
+                        title = "Investigate License",
+                        description = "Check the package's repository, documentation, or contact the maintainer to determine the license.",
+                        effort = "MEDIUM",
+                        steps = listOf(
+                            "Check the package's npm/maven/pypi page for license info",
+                            "Look for LICENSE, COPYING, or README files in the repository",
+                            "Check the source code headers for license notices",
+                            "Contact the maintainer if unclear"
+                        )
+                    )
+                )
+            )
+
+        // If we have no knowledge graph, provide basic explanations
+        if (licenseGraphService == null) {
+            return generateBasicExplanations(dependencyId, license, curation)
+        }
+
+        // Use the knowledge graph for rich explanations
+        val graph = licenseGraphService.getGraph()
+        val licenseNode = graph.getLicense(license.uppercase().replace(" ", "-"))
+
+        val whyNotExplanations = mutableListOf<WhyNotExplanation>()
+        val triggeredObligations = mutableListOf<ObligationInfo>()
+        val compatibilityIssues = mutableListOf<CompatibilityIssue>()
+        val resolutions = mutableListOf<ResolutionSuggestion>()
+
+        // Check for license expression (OR/AND)
+        if (license.contains(" OR ") || license.contains(" AND ")) {
+            whyNotExplanations.add(
+                WhyNotExplanation(
+                    type = "LICENSE_EXPRESSION",
+                    title = if (license.contains(" OR ")) "🔴 OR License Expression - Choice Required" else "🔴 AND License Expression - Multiple Obligations",
+                    summary = if (license.contains(" OR ")) {
+                        "This dependency offers multiple license options. You must explicitly choose one."
+                    } else {
+                        "This dependency requires compliance with multiple licenses simultaneously."
+                    },
+                    details = if (license.contains(" OR ")) {
+                        listOf(
+                            "License expression: $license",
+                            "OR means you can choose which license to comply with",
+                            "Your choice should be documented for audit purposes",
+                            "Consider choosing the most permissive option that fits your use case"
+                        )
+                    } else {
+                        listOf(
+                            "License expression: $license",
+                            "AND means you must comply with ALL licenses",
+                            "Review obligations from each license",
+                            "The most restrictive license determines your overall constraints"
+                        )
+                    },
+                    riskLevel = 3
+                )
+            )
+
+            resolutions.add(
+                ResolutionSuggestion(
+                    type = "DOCUMENT_CHOICE",
+                    title = "Document Your License Choice",
+                    description = "Select and document which license you're using from the expression.",
+                    effort = "LOW",
+                    steps = listOf(
+                        "Review each license option in the expression",
+                        "Choose the one that best fits your distribution model",
+                        "Document your choice in the curation decision",
+                        "Ensure your NOTICE file reflects the chosen license"
+                    )
+                )
+            )
+        }
+
+        // Get license info from graph
+        if (licenseNode != null) {
+            // Add category explanation
+            whyNotExplanations.add(
+                WhyNotExplanation(
+                    type = "LICENSE_CATEGORY",
+                    title = "License Category: ${licenseNode.category.displayName}",
+                    summary = "${licenseNode.name} is classified as ${licenseNode.category.displayName}.",
+                    details = listOf(
+                        "SPDX ID: ${licenseNode.spdxId}",
+                        "OSI Approved: ${if (licenseNode.isOsiApproved) "Yes" else "No"}",
+                        "FSF Free: ${if (licenseNode.isFsfFree) "Yes" else "No"}",
+                        "Risk Level: ${licenseNode.category.riskLevel}/6"
+                    ),
+                    riskLevel = licenseNode.category.riskLevel
+                )
+            )
+
+            // Copyleft explanation
+            if (licenseNode.copyleftStrength.propagationLevel > 0) {
+                whyNotExplanations.add(
+                    WhyNotExplanation(
+                        type = "COPYLEFT_RISK",
+                        title = "Copyleft: ${licenseNode.copyleftStrength.displayName}",
+                        summary = "This license has ${licenseNode.copyleftStrength.displayName.lowercase()} copyleft requirements.",
+                        details = when (licenseNode.copyleftStrength.propagationLevel) {
+                            4 -> listOf(
+                                "Network copyleft (like AGPL) - highest propagation",
+                                "Users interacting over a network can request source code",
+                                "Even SaaS deployments trigger disclosure requirements"
+                            )
+                            3 -> listOf(
+                                "Strong copyleft (like GPL) - high propagation",
+                                "Derivative works must use the same license",
+                                "Linking may require licensing your code under GPL"
+                            )
+                            2 -> listOf(
+                                "Library copyleft (like LGPL) - moderate propagation",
+                                "Dynamic linking generally allowed without propagation",
+                                "Modifications to the library must be shared"
+                            )
+                            1 -> listOf(
+                                "File-level copyleft (like MPL) - limited propagation",
+                                "Only modified files need to be shared",
+                                "Your own files can remain proprietary"
+                            )
+                            else -> listOf("Copyleft strength: ${licenseNode.copyleftStrength.displayName}")
+                        },
+                        riskLevel = licenseNode.copyleftStrength.propagationLevel + 1
+                    )
+                )
+            }
+
+            // Get obligations
+            val obligations = graph.getObligationsForLicense(licenseNode.spdxId)
+            obligations.forEach { (obligation, scope) ->
+                triggeredObligations.add(
+                    ObligationInfo(
+                        name = obligation.name,
+                        description = obligation.description,
+                        scope = scope.displayName,
+                        effort = obligation.effort.name,
+                        isRequired = true
+                    )
+                )
+            }
+
+            // Add resolution suggestions based on license type
+            if (licenseNode.copyleftStrength.propagationLevel >= 2) {
+                resolutions.add(
+                    ResolutionSuggestion(
+                        type = "REPLACE_DEPENDENCY",
+                        title = "Find a Permissive Alternative",
+                        description = "Replace this dependency with one using a permissive license (MIT, Apache-2.0, BSD).",
+                        effort = "MEDIUM",
+                        steps = listOf(
+                            "Search for alternative libraries with similar functionality",
+                            "Verify the alternative has a permissive license",
+                            "Test the alternative in your project",
+                            "Update your dependencies"
+                        )
+                    )
+                )
+
+                resolutions.add(
+                    ResolutionSuggestion(
+                        type = "ISOLATE_SERVICE",
+                        title = "Isolate in Separate Service",
+                        description = "Run this dependency in a separate microservice with API boundary.",
+                        effort = "HIGH",
+                        steps = listOf(
+                            "Create a new service project",
+                            "Move the dependency to the new service",
+                            "Expose functionality via REST/gRPC API",
+                            "Update main application to use the service"
+                        )
+                    )
+                )
+            }
+
+            if (obligations.isNotEmpty()) {
+                resolutions.add(
+                    ResolutionSuggestion(
+                        type = "ACCEPT_OBLIGATIONS",
+                        title = "Accept and Fulfill Obligations",
+                        description = "If your use case allows, accept the license and ensure compliance.",
+                        effort = if (obligations.size > 3) "HIGH" else "MEDIUM",
+                        steps = obligations.map { "Fulfill: ${it.obligation.name} - ${it.obligation.description}" }
+                    )
+                )
+            }
+        } else {
+            // License not found in graph
+            whyNotExplanations.add(
+                WhyNotExplanation(
+                    type = "UNRECOGNIZED_LICENSE",
+                    title = "⚠️ Unrecognized License",
+                    summary = "The license '$license' is not in our knowledge base.",
+                    details = listOf(
+                        "This license may be custom, proprietary, or rarely used",
+                        "Manual review is recommended to understand obligations",
+                        "Consider checking SPDX license list for standard identifier"
+                    ),
+                    riskLevel = 4
+                )
+            )
+
+            resolutions.add(
+                ResolutionSuggestion(
+                    type = "INVESTIGATE",
+                    title = "Research the License",
+                    description = "Look up the license terms and understand the obligations.",
+                    effort = "MEDIUM",
+                    steps = listOf(
+                        "Search for the license text online",
+                        "Check if it's a variant of a known license",
+                        "Consult with legal if obligations are unclear",
+                        "Document your findings in the curation comment"
+                    )
+                )
+            )
+        }
+
+        // Always add policy exception as an option
+        resolutions.add(
+            ResolutionSuggestion(
+                type = "REQUEST_EXCEPTION",
+                title = "Request Policy Exception",
+                description = "If the dependency is critical and alternatives aren't viable, request a formal exception.",
+                effort = "LOW",
+                steps = listOf(
+                    "Document why this dependency is necessary",
+                    "List alternatives considered",
+                    "Submit exception request to compliance team"
+                )
+            )
+        )
+
         return CurationExplanationsResponse(
             dependencyId = dependencyId,
-            whyNotExplanations = emptyList(),
+            whyNotExplanations = whyNotExplanations,
+            triggeredObligations = triggeredObligations,
+            compatibilityIssues = compatibilityIssues,
+            resolutions = resolutions
+        )
+    }
+
+    /**
+     * Generate basic explanations when knowledge graph is not available
+     */
+    private fun generateBasicExplanations(
+        dependencyId: String,
+        license: String,
+        curation: CurationEntity
+    ): CurationExplanationsResponse {
+        val whyNotExplanations = mutableListOf<WhyNotExplanation>()
+        val resolutions = mutableListOf<ResolutionSuggestion>()
+
+        // Check for common patterns
+        val upperLicense = license.uppercase()
+
+        when {
+            upperLicense.contains("GPL") && !upperLicense.contains("LGPL") -> {
+                whyNotExplanations.add(
+                    WhyNotExplanation(
+                        type = "COPYLEFT_RISK",
+                        title = "🔴 GPL License - Strong Copyleft",
+                        summary = "GPL requires derivative works to be licensed under GPL.",
+                        details = listOf(
+                            "If you distribute this software, you may need to release your source code",
+                            "Linking with GPL code may 'infect' your codebase",
+                            "Consider architectural isolation or finding alternatives"
+                        ),
+                        riskLevel = 4
+                    )
+                )
+            }
+            upperLicense.contains("AGPL") -> {
+                whyNotExplanations.add(
+                    WhyNotExplanation(
+                        type = "COPYLEFT_RISK",
+                        title = "🔴 AGPL License - Network Copyleft",
+                        summary = "AGPL extends copyleft to network use (SaaS).",
+                        details = listOf(
+                            "Even if you don't distribute, network users can request source",
+                            "Highest copyleft propagation level",
+                            "Strongly consider alternatives or isolation"
+                        ),
+                        riskLevel = 5
+                    )
+                )
+            }
+            upperLicense.contains("LGPL") -> {
+                whyNotExplanations.add(
+                    WhyNotExplanation(
+                        type = "COPYLEFT_RISK",
+                        title = "🟡 LGPL License - Library Copyleft",
+                        summary = "LGPL allows dynamic linking without copyleft propagation.",
+                        details = listOf(
+                            "Dynamic linking is generally safe",
+                            "Modifications to the library must be shared",
+                            "Users must be able to relink with modified library versions"
+                        ),
+                        riskLevel = 2
+                    )
+                )
+            }
+            upperLicense.contains(" OR ") -> {
+                whyNotExplanations.add(
+                    WhyNotExplanation(
+                        type = "LICENSE_EXPRESSION",
+                        title = "🔴 Dual License - Choice Required",
+                        summary = "This dependency offers multiple license options.",
+                        details = listOf(
+                            "You must explicitly choose which license to comply with",
+                            "Document your choice for audit purposes",
+                            "Choose the most permissive option that fits your needs"
+                        ),
+                        riskLevel = 3
+                    )
+                )
+            }
+        }
+
+        // Add basic resolutions
+        resolutions.add(
+            ResolutionSuggestion(
+                type = "ACCEPT",
+                title = "Accept License",
+                description = "If the license terms are acceptable for your use case.",
+                effort = "LOW",
+                steps = listOf(
+                    "Review the license terms",
+                    "Ensure you can comply with obligations",
+                    "Document your decision"
+                )
+            )
+        )
+
+        resolutions.add(
+            ResolutionSuggestion(
+                type = "MODIFY",
+                title = "Specify Different License",
+                description = "If you've determined the actual license differs from what was detected.",
+                effort = "LOW",
+                steps = listOf(
+                    "Verify the correct license from source",
+                    "Enter the correct SPDX identifier",
+                    "Add a comment explaining your finding"
+                )
+            )
+        )
+
+        return CurationExplanationsResponse(
+            dependencyId = dependencyId,
+            whyNotExplanations = whyNotExplanations,
             triggeredObligations = emptyList(),
             compatibilityIssues = emptyList(),
-            resolutions = emptyList()
+            resolutions = resolutions
         )
     }
 
@@ -1457,6 +2011,10 @@ class CurationService(
             try { json.decodeFromString<List<String>>(it) } catch (e: Exception) { null }
         }
 
+        val spdxLicenseInfo = spdxLicenseData?.let {
+            try { json.decodeFromString<SpdxLicenseInfo>(it) } catch (e: Exception) { null }
+        }
+
         return EnhancedCurationItemResponse(
             id = id.toString(),
             dependencyId = dependencyId,
@@ -1484,7 +2042,7 @@ class CurationService(
                 PriorityInfo(priorityLevel, priorityScore, priorityFactorsList)
             } else null,
             spdxValidated = spdxValidated,
-            spdxLicense = null,
+            spdxLicense = spdxLicenseInfo,
             requiresJustification = requiresJustification,
             justificationComplete = justificationComplete,
             justification = justification,

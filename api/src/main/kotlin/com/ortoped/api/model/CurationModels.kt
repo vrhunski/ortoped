@@ -196,6 +196,26 @@ data class BulkCurationError(
     val error: String
 )
 
+/**
+ * Request to add a dependency to curation manually
+ * Used when a policy violation occurs for a dependency that isn't in the curation queue
+ */
+@Serializable
+data class AddToCurationRequest(
+    val dependencyId: String,
+    val reason: String? = null // Optional reason for adding to curation (e.g., "Policy violation: unknown license")
+)
+
+/**
+ * Response after adding a dependency to curation
+ */
+@Serializable
+data class AddToCurationResponse(
+    val success: Boolean,
+    val item: CurationItemResponse? = null,
+    val message: String
+)
+
 // ============================================================================
 // INCREMENTAL CURATION MODELS (Phase 9)
 // ============================================================================
@@ -504,7 +524,7 @@ data class CurationExplanationsResponse(
     val whyNotExplanations: List<WhyNotExplanation> = emptyList(),
     val triggeredObligations: List<ObligationInfo> = emptyList(),
     val compatibilityIssues: List<CompatibilityIssue> = emptyList(),
-    val resolutions: List<ResolutionOption> = emptyList()
+    val resolutions: List<ResolutionSuggestion> = emptyList()
 )
 
 /**
@@ -512,13 +532,11 @@ data class CurationExplanationsResponse(
  */
 @Serializable
 data class WhyNotExplanation(
-    val policyRuleId: String,
-    val policyRuleName: String,
-    val severity: String, // ERROR, WARNING, INFO
-    val explanation: String,
-    val whatItMeans: String,
-    val howToFix: String,
-    val affectedLicense: String? = null
+    val type: String, // LICENSE_EXPRESSION, LICENSE_CATEGORY, COPYLEFT_RISK, UNRECOGNIZED_LICENSE, UNKNOWN_LICENSE
+    val title: String,
+    val summary: String,
+    val details: List<String> = emptyList(),
+    val riskLevel: Int = 0 // 0-6, higher = more risk
 )
 
 /**
@@ -528,9 +546,9 @@ data class WhyNotExplanation(
 data class ObligationInfo(
     val name: String,
     val description: String,
-    val trigger: String, // e.g., "Distribution", "Modification"
-    val effortLevel: String, // LOW, MEDIUM, HIGH
-    val appliesToScopes: List<String> // Which distribution scopes
+    val scope: String, // e.g., "Distribution", "Modification", "All Uses"
+    val effort: String, // LOW, MEDIUM, HIGH
+    val isRequired: Boolean = true
 )
 
 /**
@@ -548,11 +566,12 @@ data class CompatibilityIssue(
 )
 
 /**
- * Resolution option for fixing an issue
+ * Resolution suggestion for fixing an issue
  */
 @Serializable
-data class ResolutionOption(
-    val type: String, // REPLACE_DEPENDENCY, ADD_EXCEPTION, CHANGE_DISTRIBUTION, SELECT_OR_LICENSE
+data class ResolutionSuggestion(
+    val type: String, // REPLACE_DEPENDENCY, ADD_EXCEPTION, DOCUMENT_CHOICE, ISOLATE_SERVICE, ACCEPT_OBLIGATIONS, REQUEST_EXCEPTION, INVESTIGATE
+    val title: String,
     val description: String,
     val effort: String, // LOW, MEDIUM, HIGH
     val steps: List<String> = emptyList()

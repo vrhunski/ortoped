@@ -37,6 +37,7 @@ const statusFilter = ref<string | null>(null)
 const priorityFilter = ref<string | null>(null)
 const confidenceFilter = ref<string | null>(null)
 const searchFilter = ref('')
+const highlightedDependency = ref<string | null>(null)
 
 // Dialog states
 const showItemDetail = ref(false)
@@ -49,6 +50,7 @@ const currentOrLicense = ref<any>(null)
 
 // Action states
 const submitting = ref(false)
+const validatingSpdx = ref(false)
 const approverName = ref('')
 const approvalComment = ref('')
 const approverRole = ref('')
@@ -73,6 +75,16 @@ const justification = ref({
 // OR License resolution form
 const orLicenseChoice = ref('')
 const orLicenseReason = ref('')
+
+// Watch for license changes and auto-switch to MODIFY if different from AI suggestion
+watch(decisionLicense, (newLicense) => {
+  if (currentItem.value && decisionAction.value === 'ACCEPT') {
+    const aiLicense = currentItem.value.aiSuggestion?.suggestedLicense || ''
+    if (newLicense && newLicense !== aiLicense) {
+      decisionAction.value = 'MODIFY'
+    }
+  }
+})
 
 // Filter options
 const statusOptions = [
@@ -205,6 +217,18 @@ const unresolvedOrLicenseCount = computed(() => {
   return orLicenses.value.filter(ol => !ol.isResolved).length
 })
 
+// Row class for highlighting dependency from violations
+function getRowClass(data: CurationItem) {
+  if (highlightedDependency.value) {
+    // Match by exact name or case-insensitive
+    if (data.dependencyName === highlightedDependency.value ||
+        data.dependencyName.toLowerCase() === highlightedDependency.value.toLowerCase()) {
+      return 'highlighted-row'
+    }
+  }
+  return ''
+}
+
 // Fetch data
 async function fetchData() {
   loading.value = true
@@ -240,9 +264,22 @@ async function submitDecision() {
 
   submitting.value = true
   try {
+    // Safety check: ensure ACCEPT action has valid AI suggestion
+    let action = decisionAction.value
+    if (action === 'ACCEPT') {
+      const aiLicense = currentItem.value.aiSuggestion?.suggestedLicense
+      if (!aiLicense) {
+        // No AI suggestion available, switch to MODIFY
+        action = 'MODIFY'
+      } else if (decisionLicense.value && decisionLicense.value !== aiLicense) {
+        // License differs from AI suggestion, switch to MODIFY
+        action = 'MODIFY'
+      }
+    }
+
     const decision: CurationDecision = {
-      action: decisionAction.value,
-      curatedLicense: decisionAction.value === 'MODIFY' ? decisionLicense.value : undefined,
+      action: action,
+      license: (action === 'MODIFY' || action === 'REJECT') ? decisionLicense.value : undefined,
       comment: decisionComment.value || undefined,
       curatorId: 'curator' // TODO: Get from auth
     }
@@ -374,6 +411,22 @@ function getPrioritySeverity(priority?: string): 'danger' | 'warning' | 'info' {
   }
 }
 
+function getRiskBadge(riskLevel: number): string {
+  if (riskLevel >= 5) return 'Critical'
+  if (riskLevel >= 4) return 'High'
+  if (riskLevel >= 3) return 'Medium'
+  if (riskLevel >= 2) return 'Low'
+  return 'Info'
+}
+
+function getRiskSeverity(riskLevel: number): 'danger' | 'warning' | 'info' | 'success' {
+  if (riskLevel >= 5) return 'danger'
+  if (riskLevel >= 4) return 'danger'
+  if (riskLevel >= 3) return 'warning'
+  if (riskLevel >= 2) return 'info'
+  return 'success'
+}
+
 function getConfidenceClass(confidence: string | null): string {
   switch (confidence) {
     case 'HIGH': return 'confidence-high'
@@ -438,9 +491,22 @@ async function submitDecisionWithJustification() {
 
   submitting.value = true
   try {
+    // Safety check: ensure ACCEPT action has valid AI suggestion
+    let action = decisionAction.value
+    if (action === 'ACCEPT') {
+      const aiLicense = currentItem.value.aiSuggestion?.suggestedLicense
+      if (!aiLicense) {
+        // No AI suggestion available, switch to MODIFY
+        action = 'MODIFY'
+      } else if (decisionLicense.value && decisionLicense.value !== aiLicense) {
+        // License differs from AI suggestion, switch to MODIFY
+        action = 'MODIFY'
+      }
+    }
+
     const payload = {
-      action: decisionAction.value,
-      curatedLicense: decisionAction.value === 'MODIFY' ? decisionLicense.value : undefined,
+      action: action,
+      license: (action === 'MODIFY' || action === 'REJECT') ? decisionLicense.value : undefined,
       comment: decisionComment.value || undefined,
       justification: itemRequiresJustification.value ? {
         spdxId: justification.value.spdxId || decisionLicense.value || currentItem.value.aiSuggestion?.suggestedLicense,
@@ -618,6 +684,42 @@ async function openItemDetailWithExplanations(item: CurationItem) {
   await fetchExplanations(item.dependencyId)
 }
 
+// Validate SPDX for current item
+async function validateSpdx() {
+  if (!currentItem.value || !session.value) return
+
+  validatingSpdx.value = true
+  try {
+    const response = await api.validateSpdxForItem(session.value.scanId, currentItem.value.dependencyId)
+
+    // Update local state
+    const index = items.value.findIndex(i => i.id === currentItem.value!.id)
+    if (index !== -1) {
+      items.value[index] = response.data
+    }
+    currentItem.value = response.data
+
+    toast.add({
+      severity: response.data.spdxValidated ? 'success' : 'warn',
+      summary: response.data.spdxValidated ? 'SPDX Validated' : 'SPDX Not Found',
+      detail: response.data.spdxValidated
+        ? `License validated as ${response.data.spdxLicense?.licenseId}`
+        : 'License could not be found in SPDX database',
+      life: 3000
+    })
+  } catch (e: any) {
+    console.error('Failed to validate SPDX', e)
+    toast.add({
+      severity: 'error',
+      summary: 'Validation Failed',
+      detail: e.response?.data?.error || 'Failed to validate SPDX license',
+      life: 5000
+    })
+  } finally {
+    validatingSpdx.value = false
+  }
+}
+
 // Export curations as YAML
 async function exportCurationsYaml() {
   if (!session.value) return
@@ -667,8 +769,156 @@ async function exportNoticeFile() {
 
 // Initial data load with EU compliance
 async function initializeData() {
+  // Check for query parameters (from "Review in Curation" button in violations)
+  const searchQuery = route.query.search as string | undefined
+  const highlightQuery = route.query.highlight as string | undefined
+  const dependencyIdQuery = route.query.dependencyId as string | undefined
+
+  if (searchQuery) {
+    searchFilter.value = searchQuery
+  }
+  if (highlightQuery) {
+    highlightedDependency.value = highlightQuery
+  }
+
   await fetchData()
   await fetchEUComplianceData()
+
+  // If a dependency was highlighted, show a toast and auto-open it if found
+  if (highlightedDependency.value || dependencyIdQuery) {
+    // Try multiple matching strategies:
+    // 1. Exact match by dependencyId (most reliable)
+    // 2. Exact match by dependencyName
+    // 3. Case-insensitive match by dependencyName
+    // 4. Partial match (dependency name contains search term or vice versa)
+    let targetItem = items.value.find(i =>
+      dependencyIdQuery && i.dependencyId === dependencyIdQuery
+    )
+
+    if (!targetItem && highlightedDependency.value) {
+      const searchTerm = highlightedDependency.value.toLowerCase()
+      targetItem = items.value.find(i => i.dependencyName === highlightedDependency.value) ||
+                   items.value.find(i => i.dependencyName.toLowerCase() === searchTerm) ||
+                   items.value.find(i =>
+                     i.dependencyName.toLowerCase().includes(searchTerm) ||
+                     searchTerm.includes(i.dependencyName.toLowerCase())
+                   )
+    }
+
+    if (targetItem) {
+      // Update highlight to match the actual found item
+      highlightedDependency.value = targetItem.dependencyName
+      searchFilter.value = targetItem.dependencyName
+
+      toast.add({
+        severity: 'info',
+        summary: 'Dependency Found',
+        detail: `Showing "${targetItem.dependencyName}" for curation review`,
+        life: 3000
+      })
+      // Auto-open the item detail dialog
+      openItemDetail(targetItem)
+    } else {
+      // Not found in regular curation items - check OR licenses
+      const depName = highlightedDependency.value || dependencyIdQuery || ''
+      const searchTermLower = depName.toLowerCase()
+
+      const targetOrLicense = orLicenses.value.find(ol =>
+        (dependencyIdQuery && ol.dependencyId === dependencyIdQuery) ||
+        ol.dependencyName === depName ||
+        ol.dependencyName.toLowerCase() === searchTermLower ||
+        ol.dependencyName.toLowerCase().includes(searchTermLower) ||
+        searchTermLower.includes(ol.dependencyName.toLowerCase())
+      )
+
+      if (targetOrLicense) {
+        // Found in OR licenses - open the OR license resolution dialog
+        highlightedDependency.value = targetOrLicense.dependencyName
+        searchFilter.value = targetOrLicense.dependencyName
+
+        toast.add({
+          severity: 'info',
+          summary: 'OR License Found',
+          detail: `"${targetOrLicense.dependencyName}" has an OR license expression that needs resolution`,
+          life: 4000
+        })
+
+        // Open the OR license dialog with this item
+        currentOrLicense.value = targetOrLicense
+        showOrLicenseDialog.value = true
+      } else if (dependencyIdQuery) {
+        // Dependency not found but we have the ID - try to add it to curation
+        toast.add({
+          severity: 'info',
+          summary: 'Adding to Curation',
+          detail: `Adding "${depName}" to the curation queue...`,
+          life: 2000
+        })
+
+        try {
+          const addResponse = await api.addToCuration(
+            session.value!.scanId,
+            dependencyIdQuery,
+            'Policy violation: manual review required'
+          )
+
+          if (addResponse.data.success && addResponse.data.item) {
+            // Refresh items to include the new one
+            const itemsRes = await api.listCurationItems(session.value!.scanId, { pageSize: 500 })
+            items.value = itemsRes.data.items
+            total.value = itemsRes.data.total
+
+            // Refresh session stats
+            const sessionRes = await api.getCurationSession(session.value!.scanId)
+            session.value = sessionRes.data
+
+            // Find and open the newly added item
+            const newItem = items.value.find(i => i.dependencyId === dependencyIdQuery)
+            if (newItem) {
+              highlightedDependency.value = newItem.dependencyName
+              searchFilter.value = newItem.dependencyName
+
+              toast.add({
+                severity: 'success',
+                summary: 'Added to Curation',
+                detail: addResponse.data.message,
+                life: 3000
+              })
+
+              openItemDetail(newItem)
+            }
+          } else {
+            toast.add({
+              severity: 'error',
+              summary: 'Failed to Add',
+              detail: addResponse.data.message,
+              life: 5000
+            })
+          }
+        } catch (e) {
+          console.error('Failed to add dependency to curation', e)
+          toast.add({
+            severity: 'error',
+            summary: 'Error',
+            detail: 'Failed to add dependency to curation queue',
+            life: 5000
+          })
+        }
+      } else {
+        // Dependency not found and no ID available
+        toast.add({
+          severity: 'warn',
+          summary: 'Dependency Not in Curation',
+          detail: `"${depName}" is not in the curation queue. Please try adding it from the scan details page.`,
+          life: 6000
+        })
+        // Keep the search filter so user can see there are no results
+        searchFilter.value = depName
+      }
+    }
+    // Clear the query params after processing
+    router.replace({ query: {} })
+  }
 }
 
 onMounted(initializeData)
@@ -921,6 +1171,7 @@ onMounted(initializeData)
           :rows="20"
           dataKey="id"
           :selectionMode="session.status !== 'APPROVED' ? undefined : undefined"
+          :rowClass="getRowClass"
         >
           <Column v-if="session.status !== 'APPROVED'" selectionMode="multiple" style="width: 50px" />
 
@@ -954,15 +1205,25 @@ onMounted(initializeData)
             </template>
           </Column>
 
-          <Column header="SPDX Suggestion" style="min-width: 200px">
+          <Column header="SPDX License" style="min-width: 220px">
             <template #body="{ data }">
-              <div v-if="data.spdxSuggestion?.licenseId" class="spdx-suggestion">
-                <span class="suggested-license">{{ data.spdxSuggestion.licenseId }}</span>
-                <span class="spdx-badge" :class="getSpdxValidationClass(data.spdxValidated)">
-                  {{ data.spdxValidated ? '✓ Valid' : '⚠ Invalid' }}
-                </span>
+              <div v-if="data.spdxLicense?.licenseId" class="spdx-suggestion">
+                <span class="suggested-license">{{ data.spdxLicense.licenseId }}</span>
+                <div class="spdx-badges">
+                  <span class="spdx-badge" :class="getSpdxValidationClass(data.spdxValidated)">
+                    {{ data.spdxValidated ? '✓ Valid' : '⚠ Invalid' }}
+                  </span>
+                  <span v-if="data.spdxLicense.isOsiApproved" class="spdx-badge spdx-osi">OSI</span>
+                  <span v-if="data.spdxLicense.isFsfLibre" class="spdx-badge spdx-fsf">FSF</span>
+                  <span v-if="data.spdxLicense.isDeprecated" class="spdx-badge spdx-deprecated">Deprecated</span>
+                </div>
+                <span class="spdx-name">{{ data.spdxLicense.name }}</span>
               </div>
-              <span v-else class="no-suggestion">No SPDX suggestion</span>
+              <div v-else-if="data.aiSuggestion?.spdxId" class="spdx-suggestion from-ai">
+                <span class="suggested-license">{{ data.aiSuggestion.spdxId }}</span>
+                <span class="spdx-badge spdx-ai">From AI</span>
+              </div>
+              <span v-else class="no-suggestion">No SPDX info</span>
             </template>
           </Column>
 
@@ -1089,13 +1350,86 @@ onMounted(initializeData)
                 </div>
                 <i class="pi pi-arrow-right"></i>
                 <div class="license-box spdx">
-                  <label>SPDX Suggested</label>
-                  <span>{{ currentItem.spdxLicense?.licenseId || 'None' }}</span>
-                  <span v-if="currentItem.spdxLicense" :class="['spdx-badge', getSpdxValidationClass(currentItem.spdxValidated)]">
-                    {{ currentItem.spdxValidated ? '✓ Valid' : '⚠ Invalid' }}
+                  <label>SPDX Validated</label>
+                  <span>{{ currentItem.spdxLicense?.licenseId || currentItem.aiSuggestion?.spdxId || 'None' }}</span>
+                  <span v-if="currentItem.spdxLicense || currentItem.aiSuggestion?.spdxId" :class="['spdx-badge', getSpdxValidationClass(currentItem.spdxValidated)]">
+                    {{ currentItem.spdxValidated ? '✓ Valid' : '⚠ Needs Review' }}
                   </span>
                 </div>
               </div>
+
+              <!-- SPDX License Details -->
+              <div v-if="currentItem.spdxLicense" class="spdx-info-box">
+                <label><i class="pi pi-verified"></i> SPDX License Details</label>
+                <div class="spdx-details">
+                  <p><strong>License ID:</strong> {{ currentItem.spdxLicense.licenseId }}</p>
+                  <p><strong>Full Name:</strong> {{ currentItem.spdxLicense.name }}</p>
+                  <div class="spdx-status-badges">
+                    <span v-if="currentItem.spdxLicense.isOsiApproved" class="spdx-badge spdx-osi">
+                      <i class="pi pi-check-circle"></i> OSI Approved
+                    </span>
+                    <span v-if="currentItem.spdxLicense.isFsfLibre" class="spdx-badge spdx-fsf">
+                      <i class="pi pi-check-circle"></i> FSF Free/Libre
+                    </span>
+                    <span v-if="currentItem.spdxLicense.isDeprecated" class="spdx-badge spdx-deprecated">
+                      <i class="pi pi-exclamation-triangle"></i> Deprecated
+                    </span>
+                    <span v-if="!currentItem.spdxLicense.isOsiApproved && !currentItem.spdxLicense.isFsfLibre" class="spdx-badge spdx-warning">
+                      <i class="pi pi-info-circle"></i> Not OSI/FSF Approved
+                    </span>
+                  </div>
+                  <div v-if="currentItem.spdxLicense.seeAlso?.length" class="spdx-links">
+                    <strong>References:</strong>
+                    <ul>
+                      <li v-for="(url, idx) in currentItem.spdxLicense.seeAlso.slice(0, 3)" :key="idx">
+                        <a :href="url" target="_blank" rel="noopener">{{ url }}</a>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <!-- AI Suggestion Details -->
+              <div v-else-if="currentItem.aiSuggestion?.spdxId" class="spdx-info-box ai-source">
+                <label><i class="pi pi-sparkles"></i> AI SPDX Suggestion</label>
+                <div class="spdx-details">
+                  <p><strong>Suggested SPDX ID:</strong> {{ currentItem.aiSuggestion.spdxId }}</p>
+                  <p class="ai-note"><i class="pi pi-info-circle"></i> This SPDX ID was suggested by AI and may need validation.</p>
+                  <div v-if="currentItem.aiSuggestion.alternatives?.length" class="alternatives">
+                    <strong>Alternative suggestions:</strong>
+                    <span v-for="(alt, idx) in currentItem.aiSuggestion.alternatives" :key="idx" class="alt-badge">
+                      {{ alt }}
+                    </span>
+                  </div>
+                  <Button
+                    label="Validate SPDX"
+                    icon="pi pi-check-circle"
+                    severity="info"
+                    size="small"
+                    class="mt-2"
+                    :loading="validatingSpdx"
+                    @click="validateSpdx"
+                  />
+                </div>
+              </div>
+
+              <!-- No SPDX info - show validate button -->
+              <div v-else-if="!currentItem.spdxLicense && !currentItem.aiSuggestion?.spdxId" class="spdx-info-box missing">
+                <label><i class="pi pi-exclamation-circle"></i> No SPDX Information</label>
+                <div class="spdx-details">
+                  <p>This license has not been validated against the SPDX license list.</p>
+                  <Button
+                    label="Validate SPDX"
+                    icon="pi pi-check-circle"
+                    severity="info"
+                    size="small"
+                    class="mt-2"
+                    :loading="validatingSpdx"
+                    @click="validateSpdx"
+                  />
+                </div>
+              </div>
+
               <div v-if="currentItem.aiSuggestion?.reasoning" class="reasoning-box">
                 <label>AI Reasoning</label>
                 <p>{{ currentItem.aiSuggestion.reasoning }}</p>
@@ -1149,44 +1483,38 @@ onMounted(initializeData)
             </div>
           </TabPanel>
 
-          <!-- Tab 2: Explanations ("Why Not?" + Obligations + Compatibility) -->
+          <!-- Tab 2: Explanations ("Why Not?" + Obligations + Compatibility + Resolutions) -->
           <TabPanel header="Explanations">
             <div v-if="currentExplanations" class="explanations-content">
               <!-- Why Not? Explanations -->
               <div v-if="currentExplanations.whyNotExplanations?.length" class="explanation-section">
-                <h4><i class="pi pi-question-circle"></i> Why Not? Policy Violations</h4>
+                <h4><i class="pi pi-question-circle"></i> Why This License Needs Attention</h4>
                 <div v-for="(exp, idx) in currentExplanations.whyNotExplanations" :key="idx" class="explanation-card violation">
                   <div class="exp-header">
-                    <Badge :value="exp.severity" :severity="exp.severity === 'ERROR' ? 'danger' : 'warning'" />
-                    <span class="rule-name">{{ exp.ruleName }}</span>
+                    <Badge :value="getRiskBadge(exp.riskLevel)" :severity="getRiskSeverity(exp.riskLevel)" />
+                    <span class="rule-name">{{ exp.title }}</span>
                   </div>
-                  <p class="exp-reason">{{ exp.reason }}</p>
-                  <div v-if="exp.legalBasis" class="exp-detail">
-                    <strong>Legal Basis:</strong> {{ exp.legalBasis }}
-                  </div>
-                  <div v-if="exp.resolutions?.length" class="exp-resolutions">
-                    <strong>Possible Resolutions:</strong>
+                  <p class="exp-summary">{{ exp.summary }}</p>
+                  <div v-if="exp.details?.length" class="exp-details">
                     <ul>
-                      <li v-for="(res, ri) in exp.resolutions" :key="ri">{{ res }}</li>
+                      <li v-for="(detail, di) in exp.details" :key="di">{{ detail }}</li>
                     </ul>
                   </div>
                 </div>
               </div>
 
               <!-- Triggered Obligations -->
-              <div v-if="currentExplanations.obligations?.length" class="explanation-section">
+              <div v-if="currentExplanations.triggeredObligations?.length" class="explanation-section">
                 <h4><i class="pi pi-list-check"></i> License Obligations</h4>
-                <div v-for="(obl, idx) in currentExplanations.obligations" :key="idx" class="explanation-card obligation">
+                <div v-for="(obl, idx) in currentExplanations.triggeredObligations" :key="idx" class="explanation-card obligation">
                   <div class="exp-header">
                     <Badge :value="obl.effort" :severity="obl.effort === 'HIGH' ? 'danger' : obl.effort === 'MEDIUM' ? 'warning' : 'info'" />
                     <span class="obl-name">{{ obl.name }}</span>
+                    <Badge v-if="obl.isRequired" value="Required" severity="danger" class="ml-2" />
                   </div>
                   <p class="exp-description">{{ obl.description }}</p>
                   <div v-if="obl.scope" class="exp-detail">
                     <strong>Scope:</strong> {{ obl.scope }}
-                  </div>
-                  <div v-if="obl.trigger" class="exp-detail">
-                    <strong>Trigger:</strong> {{ obl.trigger }}
                   </div>
                 </div>
               </div>
@@ -1196,18 +1524,39 @@ onMounted(initializeData)
                 <h4><i class="pi pi-exclamation-triangle"></i> Compatibility Issues</h4>
                 <div v-for="(iss, idx) in currentExplanations.compatibilityIssues" :key="idx" class="explanation-card compatibility">
                   <div class="exp-header">
-                    <Badge :value="iss.severity" :severity="iss.severity === 'BLOCKING' ? 'danger' : 'warning'" />
-                    <span>{{ iss.license1 }} ↔ {{ iss.license2 }}</span>
+                    <Badge :value="iss.compatibilityLevel" :severity="iss.compatibilityLevel === 'INCOMPATIBLE' ? 'danger' : 'warning'" />
+                    <span>{{ iss.currentLicense }} ↔ {{ iss.otherLicense }}</span>
                   </div>
                   <p class="exp-reason">{{ iss.reason }}</p>
-                  <div v-if="iss.affectedDependency" class="exp-detail">
-                    <strong>Affected:</strong> {{ iss.affectedDependency }}
+                  <div v-if="iss.otherDependencyName" class="exp-detail">
+                    <strong>Affected:</strong> {{ iss.otherDependencyName }}
+                  </div>
+                  <div v-if="iss.recommendation" class="exp-detail">
+                    <strong>Recommendation:</strong> {{ iss.recommendation }}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Resolution Suggestions -->
+              <div v-if="currentExplanations.resolutions?.length" class="explanation-section">
+                <h4><i class="pi pi-lightbulb"></i> Resolution Options</h4>
+                <div v-for="(res, idx) in currentExplanations.resolutions" :key="idx" class="explanation-card resolution">
+                  <div class="exp-header">
+                    <Badge :value="res.effort" :severity="res.effort === 'HIGH' ? 'danger' : res.effort === 'MEDIUM' ? 'warning' : 'success'" />
+                    <span class="res-title">{{ res.title }}</span>
+                  </div>
+                  <p class="exp-description">{{ res.description }}</p>
+                  <div v-if="res.steps?.length" class="exp-steps">
+                    <strong>Steps:</strong>
+                    <ol>
+                      <li v-for="(step, si) in res.steps" :key="si">{{ step }}</li>
+                    </ol>
                   </div>
                 </div>
               </div>
 
               <!-- No issues found -->
-              <div v-if="!currentExplanations.whyNotExplanations?.length && !currentExplanations.obligations?.length && !currentExplanations.compatibilityIssues?.length" class="no-explanations">
+              <div v-if="!currentExplanations.whyNotExplanations?.length && !currentExplanations.triggeredObligations?.length && !currentExplanations.compatibilityIssues?.length && !currentExplanations.resolutions?.length" class="no-explanations">
                 <i class="pi pi-check-circle"></i>
                 <p>No policy violations, obligations, or compatibility issues found for this dependency.</p>
               </div>
@@ -2114,6 +2463,129 @@ onMounted(initializeData)
   color: #374151;
 }
 
+.spdx-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+
+.spdx-name {
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-top: 0.125rem;
+}
+
+.spdx-badge.spdx-osi {
+  background: #d1fae5;
+  color: #059669;
+}
+
+.spdx-badge.spdx-fsf {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.spdx-badge.spdx-deprecated {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.spdx-badge.spdx-warning {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.spdx-badge.spdx-ai {
+  background: #f3e8ff;
+  color: #7c3aed;
+}
+
+.spdx-suggestion.from-ai {
+  opacity: 0.9;
+}
+
+.spdx-status-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.spdx-status-badges .spdx-badge {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.spdx-links {
+  margin-top: 0.75rem;
+}
+
+.spdx-links ul {
+  margin: 0.25rem 0 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.8125rem;
+}
+
+.spdx-links li {
+  margin-bottom: 0.25rem;
+}
+
+.spdx-links a {
+  color: #3b82f6;
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.spdx-links a:hover {
+  text-decoration: underline;
+}
+
+.spdx-info-box.ai-source {
+  background: #faf5ff;
+  border-left-color: #7c3aed;
+}
+
+.spdx-info-box.ai-source label {
+  color: #7c3aed;
+}
+
+.spdx-info-box.missing {
+  background: #fef3c7;
+  border-left-color: #d97706;
+}
+
+.spdx-info-box.missing label {
+  color: #b45309;
+}
+
+.ai-note {
+  color: #6b7280;
+  font-style: italic;
+  font-size: 0.8125rem !important;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem !important;
+}
+
+.alternatives {
+  margin-top: 0.75rem;
+}
+
+.alt-badge {
+  display: inline-block;
+  background: #f3f4f6;
+  color: #374151;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  margin: 0.25rem 0.25rem 0 0;
+}
+
 /* ====================================================================
    EU Compliance Styles
    ==================================================================== */
@@ -2270,6 +2742,11 @@ onMounted(initializeData)
   border-left: 3px solid #eab308;
 }
 
+.explanation-card.resolution {
+  background: #f0fdf4;
+  border-left: 3px solid #22c55e;
+}
+
 .exp-header {
   display: flex;
   align-items: center;
@@ -2284,11 +2761,30 @@ onMounted(initializeData)
 }
 
 .exp-reason,
-.exp-description {
+.exp-description,
+.exp-summary {
   margin: 0.5rem 0;
   color: #475569;
   font-size: 0.875rem;
   line-height: 1.5;
+}
+
+.exp-details ul,
+.exp-steps ol {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+  font-size: 0.8125rem;
+  color: #64748b;
+}
+
+.exp-details li,
+.exp-steps li {
+  margin-bottom: 0.25rem;
+}
+
+.exp-header .res-title {
+  font-weight: 600;
+  color: #166534;
 }
 
 .exp-detail {
@@ -2509,5 +3005,24 @@ onMounted(initializeData)
 /* EU Notice in dialogs */
 .eu-notice {
   margin-bottom: 1rem;
+}
+
+/* Highlighted row from violations navigation */
+:deep(.highlighted-row) {
+  background-color: #fef3c7 !important;
+  animation: highlight-pulse 2s ease-out;
+}
+
+:deep(.highlighted-row:hover) {
+  background-color: #fde68a !important;
+}
+
+@keyframes highlight-pulse {
+  0% {
+    background-color: #fbbf24;
+  }
+  100% {
+    background-color: #fef3c7;
+  }
 }
 </style>

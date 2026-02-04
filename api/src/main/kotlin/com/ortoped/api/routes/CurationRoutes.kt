@@ -1,6 +1,7 @@
 package com.ortoped.api.routes
 
 import com.ortoped.api.model.*
+import com.ortoped.api.plugins.ErrorResponse
 import com.ortoped.api.service.CurationService
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -25,7 +26,7 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         post("/start") {
             val scanId = call.parameters["scanId"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val request = try {
                 call.receive<StartCurationRequest>()
@@ -46,7 +47,7 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         get {
             val scanId = call.parameters["scanId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val response = curationService.getSession(scanId)
             call.respond(HttpStatusCode.OK, response)
@@ -58,7 +59,7 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         post("/approve") {
             val scanId = call.parameters["scanId"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val request = try {
                 call.receive<ApprovalRequest>()
@@ -83,7 +84,7 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         get("/items") {
             val scanId = call.parameters["scanId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val status = call.request.queryParameters["status"]
             val priority = call.request.queryParameters["priority"]
@@ -112,12 +113,32 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         get("/items/{dependencyId}") {
             val scanId = call.parameters["scanId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
             val dependencyId = call.parameters["dependencyId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Dependency ID required"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Dependency ID required", 400))
 
             val response = curationService.getCurationItem(scanId, dependencyId)
             call.respond(HttpStatusCode.OK, response)
+        }
+
+        /**
+         * Add a dependency to curation manually
+         * POST /scans/{scanId}/curation/items/add
+         * Used when a policy violation occurs for a dependency not in the curation queue
+         */
+        post("/items/add") {
+            val scanId = call.parameters["scanId"]
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
+
+            val request = call.receive<AddToCurationRequest>()
+            val curatorId = call.request.headers["X-Curator-Id"]
+
+            val response = curationService.addDependencyToCuration(scanId, request, curatorId)
+            if (response.success) {
+                call.respond(HttpStatusCode.Created, response)
+            } else {
+                call.respond(HttpStatusCode.BadRequest, response)
+            }
         }
 
         /**
@@ -126,9 +147,9 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         put("/items/{dependencyId}") {
             val scanId = call.parameters["scanId"]
-                ?: return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@put call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
             val dependencyId = call.parameters["dependencyId"]
-                ?: return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Dependency ID required"))
+                ?: return@put call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Dependency ID required", 400))
 
             val request = call.receive<CurationDecisionRequest>()
             val curatorId = call.request.headers["X-Curator-Id"]
@@ -143,21 +164,21 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         post("/bulk") {
             val scanId = call.parameters["scanId"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val request = call.receive<BulkCurationRequest>()
 
             if (request.decisions.isEmpty()) {
                 return@post call.respond(
                     HttpStatusCode.BadRequest,
-                    mapOf("error" to "At least one decision required")
+                    ErrorResponse("bad_request", "At least one decision required", 400)
                 )
             }
 
             if (request.decisions.size > 100) {
                 return@post call.respond(
                     HttpStatusCode.BadRequest,
-                    mapOf("error" to "Maximum 100 decisions per request")
+                    ErrorResponse("bad_request", "Maximum 100 decisions per request", 400)
                 )
             }
 
@@ -176,7 +197,7 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         get("/incremental") {
             val scanId = call.parameters["scanId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val response = curationService.getIncrementalChanges(scanId)
             call.respond(HttpStatusCode.OK, response)
@@ -188,7 +209,7 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         post("/incremental/apply") {
             val scanId = call.parameters["scanId"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val request = try {
                 call.receive<ApplyPreviousCurationsRequest>()
@@ -211,9 +232,9 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         post("/items/{dependencyId}/decide") {
             val scanId = call.parameters["scanId"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
             val dependencyId = call.parameters["dependencyId"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Dependency ID required"))
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Dependency ID required", 400))
 
             val request = call.receive<CurationWithJustificationRequest>()
             val curatorId = call.request.headers["X-Curator-Id"] ?: "anonymous"
@@ -232,9 +253,9 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         post("/items/{dependencyId}/justify") {
             val scanId = call.parameters["scanId"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
             val dependencyId = call.parameters["dependencyId"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Dependency ID required"))
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Dependency ID required", 400))
 
             val request = call.receive<JustificationRequest>()
             val curatorId = call.request.headers["X-Curator-Id"] ?: "anonymous"
@@ -253,9 +274,9 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         get("/items/{dependencyId}/explanations") {
             val scanId = call.parameters["scanId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
             val dependencyId = call.parameters["dependencyId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Dependency ID required"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Dependency ID required", 400))
 
             val response = curationService.getExplanationsForCuration(scanId, dependencyId)
             call.respond(HttpStatusCode.OK, response)
@@ -267,11 +288,25 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         get("/items/{dependencyId}/enhanced") {
             val scanId = call.parameters["scanId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
             val dependencyId = call.parameters["dependencyId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Dependency ID required"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Dependency ID required", 400))
 
             val response = curationService.getEnhancedCurationItem(scanId, dependencyId)
+            call.respond(HttpStatusCode.OK, response)
+        }
+
+        /**
+         * Validate SPDX license for a curation item
+         * POST /scans/{scanId}/curation/items/{dependencyId}/validate-spdx
+         */
+        post("/items/{dependencyId}/validate-spdx") {
+            val scanId = call.parameters["scanId"]
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
+            val dependencyId = call.parameters["dependencyId"]
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Dependency ID required", 400))
+
+            val response = curationService.validateSpdxForItem(scanId, dependencyId)
             call.respond(HttpStatusCode.OK, response)
         }
 
@@ -285,7 +320,7 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         get("/approval/readiness") {
             val scanId = call.parameters["scanId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val response = curationService.validateForApproval(scanId)
             call.respond(HttpStatusCode.OK, response)
@@ -297,7 +332,7 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         get("/approval") {
             val scanId = call.parameters["scanId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val response = curationService.getApprovalStatus(scanId)
             call.respond(HttpStatusCode.OK, response)
@@ -309,7 +344,7 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         post("/submit-for-approval") {
             val scanId = call.parameters["scanId"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val request = try {
                 call.receive<SubmitForApprovalRequest>()
@@ -330,7 +365,7 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         post("/approval/decide") {
             val scanId = call.parameters["scanId"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val request = call.receive<ApprovalDecisionRequest>()
             val approverId = call.request.headers["X-Approver-Id"] ?: call.request.headers["X-Curator-Id"] ?: "anonymous"
@@ -351,7 +386,7 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         get("/or-licenses") {
             val scanId = call.parameters["scanId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val response = curationService.getOrLicenses(scanId)
             call.respond(HttpStatusCode.OK, response)
@@ -363,9 +398,9 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         post("/items/{dependencyId}/resolve-or") {
             val scanId = call.parameters["scanId"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
             val dependencyId = call.parameters["dependencyId"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Dependency ID required"))
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Dependency ID required", 400))
 
             val request = call.receive<ResolveOrLicenseRequest>()
             val curatorId = call.request.headers["X-Curator-Id"] ?: "anonymous"
@@ -384,7 +419,7 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         get("/audit-logs") {
             val scanId = call.parameters["scanId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val entityType = call.request.queryParameters["entityType"]
             val entityId = call.request.queryParameters["entityId"]
@@ -414,7 +449,7 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         get("/export/curations-yaml") {
             val scanId = call.parameters["scanId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val response = curationService.exportCurationsYaml(scanId)
             call.respond(HttpStatusCode.OK, response)
@@ -426,7 +461,7 @@ fun Route.curationRoutes(curationService: CurationService) {
          */
         get("/export/notice") {
             val scanId = call.parameters["scanId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Scan ID required"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val response = curationService.exportNoticeFile(scanId)
             call.respond(HttpStatusCode.OK, response)

@@ -56,7 +56,8 @@ fun Application.module() {
         curationRepository = curationRepository,
         curationSessionRepository = curationSessionRepository,
         curatedScanRepository = curatedScanRepository,
-        scanRepository = scanRepository
+        scanRepository = scanRepository,
+        licenseGraphService = licenseGraphService
     )
     val templateService = TemplateService(
         templateRepository = curationTemplateRepository,

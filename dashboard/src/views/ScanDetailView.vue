@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { useRoute, RouterLink } from 'vue-router'
+import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { api, type Scan, type Dependency, type Policy, type PolicyReport, type SpdxLicenseDetailResponse, type ReportSummary, type CurationSession, type EnhancedViolation } from '@/api/client'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -11,6 +11,7 @@ import { useToast } from 'primevue/usetoast'
 import LicenseDetailPopup from '@/components/LicenseDetailPopup.vue'
 
 const route = useRoute()
+const router = useRouter()
 const toast = useToast()
 
 const scan = ref<Scan | null>(null)
@@ -38,6 +39,7 @@ const downloadingReport = ref(false)
 
 // Enhanced violations state
 const expandedViolations = ref<Set<number>>(new Set())
+const addingToCuration = ref<string | null>(null) // Track which dependency is being added
 
 function toggleViolationExpand(index: number) {
   if (expandedViolations.value.has(index)) {
@@ -79,6 +81,265 @@ function getEffortColor(effort: string): string {
   return colors[effort] || 'info'
 }
 
+// ============================================================================
+// CURATION DECISION STRATEGY (from CURATION-DECISION-STRATEGY.md)
+// ============================================================================
+
+// Known copyleft licenses that MUST be curated
+const COPYLEFT_LICENSES = ['GPL', 'AGPL', 'LGPL', 'SSPL', 'EPL', 'MPL', 'CDDL', 'CPL', 'OSL']
+
+// Known permissive licenses (safe to ignore conflicts between these)
+const PERMISSIVE_LICENSES = ['MIT', 'BSD', 'ISC', 'Apache', 'Unlicense', 'CC0', 'WTFPL', '0BSD', 'Zlib']
+
+// Known ScanCode false positives
+const KNOWN_FALSE_POSITIVES = ['BitTorrent-1.0', 'Zlib', 'blessing']
+
+type CurationCategory = 'MUST_CURATE' | 'REVIEW_RECOMMENDED' | 'SAFE_TO_IGNORE' | 'RESOLVED'
+
+interface CurationAssessment {
+  category: CurationCategory
+  priority: number // 0 = highest priority (must curate), 3 = lowest (resolved)
+  reasons: string[]
+  action: string
+}
+
+function assessCurationNeed(dep: Dependency): CurationAssessment {
+  const reasons: string[] = []
+  const license = dep.concludedLicense || ''
+  const declared = dep.declaredLicenses || []
+  const detected = dep.detectedLicenses || []
+  const upperLicense = license.toUpperCase()
+
+  // Check for policy violation
+  const hasViolation = policyReport.value?.violations?.some(
+    v => v.dependency === dep.name
+  ) || false
+
+  // 🔴 MUST CURATE conditions
+
+  // 1. UNKNOWN or NOASSERTION license
+  if (upperLicense === 'UNKNOWN' || upperLicense === 'NOASSERTION' || !license) {
+    reasons.push('Unknown or missing license')
+    return {
+      category: 'MUST_CURATE',
+      priority: 0,
+      reasons,
+      action: 'Manual review required - determine actual license'
+    }
+  }
+
+  // 2. Copyleft license detected
+  const hasCopyleft = COPYLEFT_LICENSES.some(cl =>
+    upperLicense.includes(cl) ||
+    detected.some(d => d.toUpperCase().includes(cl))
+  )
+  if (hasCopyleft) {
+    reasons.push('Copyleft license detected - distribution obligations may apply')
+    return {
+      category: 'MUST_CURATE',
+      priority: 0,
+      reasons,
+      action: 'Verify copyleft obligations and document decision'
+    }
+  }
+
+  // 3. Declared ≠ Detected licenses (potential conflict)
+  const declaredSet = new Set(declared.map(d => d.toUpperCase()))
+  const detectedSet = new Set(detected.map(d => d.toUpperCase()))
+  const hasMismatch = detected.length > 0 &&
+    ![...detectedSet].every(d => declaredSet.has(d)) &&
+    ![...declaredSet].every(d => detectedSet.has(d))
+
+  if (hasMismatch && !isPermissiveConflict(declared, detected)) {
+    reasons.push('Declared licenses differ from detected licenses')
+    return {
+      category: 'MUST_CURATE',
+      priority: 0,
+      reasons,
+      action: 'Review source and determine correct license'
+    }
+  }
+
+  // 4. OR/AND ambiguity in license expression
+  if ((license.includes(' OR ') || license.includes(' AND ')) && !dep.isResolved) {
+    const hasOrWithCopyleft = COPYLEFT_LICENSES.some(cl => upperLicense.includes(cl))
+    if (hasOrWithCopyleft || license.includes(' AND ')) {
+      reasons.push('License expression requires explicit choice')
+      return {
+        category: 'MUST_CURATE',
+        priority: 0,
+        reasons,
+        action: 'Choose specific license from expression'
+      }
+    }
+  }
+
+  // 5. Has policy violation
+  if (hasViolation) {
+    reasons.push('Policy violation flagged')
+    return {
+      category: 'MUST_CURATE',
+      priority: 0,
+      reasons,
+      action: 'Address policy violation'
+    }
+  }
+
+  // 🟡 REVIEW RECOMMENDED conditions
+
+  // OR expression between permissive licenses (less urgent but should document)
+  if (license.includes(' OR ') && !dep.isResolved) {
+    reasons.push('OR license expression - consider documenting choice')
+    return {
+      category: 'REVIEW_RECOMMENDED',
+      priority: 1,
+      reasons,
+      action: 'Document which license applies to your use case'
+    }
+  }
+
+  // Unresolved but has AI suggestion
+  if (!dep.isResolved && dep.aiSuggestion) {
+    reasons.push('Has AI suggestion awaiting review')
+    return {
+      category: 'REVIEW_RECOMMENDED',
+      priority: 1,
+      reasons,
+      action: 'Review and accept/reject AI suggestion'
+    }
+  }
+
+  // 🟢 SAFE TO IGNORE conditions
+
+  // Known false positive
+  const isKnownFP = detected.some(d =>
+    KNOWN_FALSE_POSITIVES.some(fp => d.toUpperCase().includes(fp.toUpperCase()))
+  )
+  if (isKnownFP && isAllPermissive(declared)) {
+    reasons.push('Known scanner false positive with permissive declared license')
+    return {
+      category: 'SAFE_TO_IGNORE',
+      priority: 2,
+      reasons,
+      action: 'Can safely accept declared license'
+    }
+  }
+
+  // Permissive vs permissive conflict
+  if (hasMismatch && isPermissiveConflict(declared, detected)) {
+    reasons.push('Permissive vs permissive conflict - obligations equivalent')
+    return {
+      category: 'SAFE_TO_IGNORE',
+      priority: 2,
+      reasons,
+      action: 'Accept declared license - no legal risk'
+    }
+  }
+
+  // ✅ RESOLVED
+  if (dep.isResolved) {
+    return {
+      category: 'RESOLVED',
+      priority: 3,
+      reasons: ['License resolved'],
+      action: 'No action needed'
+    }
+  }
+
+  // Default: unresolved without specific concerns
+  return {
+    category: 'REVIEW_RECOMMENDED',
+    priority: 1,
+    reasons: ['Unresolved - needs review'],
+    action: 'Review and curate license'
+  }
+}
+
+function isPermissiveConflict(declared: string[], detected: string[]): boolean {
+  const allDeclaredPermissive = declared.every(d =>
+    PERMISSIVE_LICENSES.some(p => d.toUpperCase().includes(p.toUpperCase()))
+  )
+  const allDetectedPermissive = detected.every(d =>
+    PERMISSIVE_LICENSES.some(p => d.toUpperCase().includes(p.toUpperCase()))
+  )
+  return allDeclaredPermissive && allDetectedPermissive
+}
+
+function isAllPermissive(licenses: string[]): boolean {
+  return licenses.length > 0 && licenses.every(l =>
+    PERMISSIVE_LICENSES.some(p => l.toUpperCase().includes(p.toUpperCase()))
+  )
+}
+
+function getCurationBadge(category: CurationCategory): { label: string; severity: string; icon: string } {
+  switch (category) {
+    case 'MUST_CURATE':
+      return { label: 'Must Curate', severity: 'danger', icon: 'pi-exclamation-triangle' }
+    case 'REVIEW_RECOMMENDED':
+      return { label: 'Review', severity: 'warning', icon: 'pi-eye' }
+    case 'SAFE_TO_IGNORE':
+      return { label: 'Safe', severity: 'success', icon: 'pi-check' }
+    case 'RESOLVED':
+      return { label: 'Resolved', severity: 'info', icon: 'pi-check-circle' }
+    default:
+      return { label: 'Unknown', severity: 'secondary', icon: 'pi-question' }
+  }
+}
+
+// Add violation license to curation session for manual review
+async function addToCuration(dependencyName: string, _license: string, dependencyId?: string) {
+  if (!scan.value) return
+
+  addingToCuration.value = dependencyName
+
+  try {
+    // Start curation session if it doesn't exist
+    if (!curationSession.value) {
+      const response = await api.startCurationSession(scan.value.id)
+      curationSession.value = response.data
+      toast.add({
+        severity: 'success',
+        summary: 'Curation Started',
+        detail: 'New curation session created',
+        life: 2000
+      })
+    }
+
+    // If we don't have the dependency ID, try to find it in the dependencies list
+    let resolvedDependencyId = dependencyId
+    if (!resolvedDependencyId) {
+      const dep = dependencies.value.find(d =>
+        d.name === dependencyName ||
+        d.name.toLowerCase() === dependencyName.toLowerCase()
+      )
+      if (dep) {
+        resolvedDependencyId = dep.id
+      }
+    }
+
+    // Navigate to curation session with the dependency pre-filtered
+    // Pass both ID and name for flexible matching
+    router.push({
+      path: `/curations/${scan.value.id}`,
+      query: {
+        search: dependencyName,
+        highlight: dependencyName,
+        ...(resolvedDependencyId && { dependencyId: resolvedDependencyId })
+      }
+    })
+  } catch (e) {
+    console.error('Failed to add to curation', e)
+    toast.add({
+      severity: 'error',
+      summary: 'Error',
+      detail: 'Failed to start curation session',
+      life: 3000
+    })
+  } finally {
+    addingToCuration.value = null
+  }
+}
+
 const filteredDependencies = computed(() => {
   let deps = [...dependencies.value]
 
@@ -91,19 +352,56 @@ const filteredDependencies = computed(() => {
     )
   }
 
-  // Sort: unresolved first (with AI suggestions at top), then resolved
+  // Sort by curation priority (based on CURATION-DECISION-STRATEGY.md)
+  // Priority: MUST_CURATE (0) > REVIEW_RECOMMENDED (1) > SAFE_TO_IGNORE (2) > RESOLVED (3)
   deps.sort((a, b) => {
-    // Unresolved with AI suggestions first
-    if (!a.isResolved && a.aiSuggestion && (b.isResolved || !b.aiSuggestion)) return -1
-    if (!b.isResolved && b.aiSuggestion && (a.isResolved || !a.aiSuggestion)) return 1
-    // Then unresolved without AI suggestions
-    if (!a.isResolved && b.isResolved) return -1
-    if (!b.isResolved && a.isResolved) return 1
-    // Then alphabetically by name
+    const assessmentA = assessCurationNeed(a)
+    const assessmentB = assessCurationNeed(b)
+
+    // Primary sort: by curation priority
+    if (assessmentA.priority !== assessmentB.priority) {
+      return assessmentA.priority - assessmentB.priority
+    }
+
+    // Secondary sort: within same priority, AI suggestions first
+    if (a.aiSuggestion && !b.aiSuggestion) return -1
+    if (!a.aiSuggestion && b.aiSuggestion) return 1
+
+    // Tertiary sort: alphabetically by name
     return a.name.localeCompare(b.name)
   })
 
   return deps
+})
+
+// Computed stats for the curation categories
+const curationStats = computed(() => {
+  const stats = {
+    mustCurate: 0,
+    reviewRecommended: 0,
+    safeToIgnore: 0,
+    resolved: 0
+  }
+
+  dependencies.value.forEach(dep => {
+    const assessment = assessCurationNeed(dep)
+    switch (assessment.category) {
+      case 'MUST_CURATE':
+        stats.mustCurate++
+        break
+      case 'REVIEW_RECOMMENDED':
+        stats.reviewRecommended++
+        break
+      case 'SAFE_TO_IGNORE':
+        stats.safeToIgnore++
+        break
+      case 'RESOLVED':
+        stats.resolved++
+        break
+    }
+  })
+
+  return stats
 })
 
 const policyOptions = computed(() =>
@@ -596,8 +894,18 @@ onMounted(fetchData)
                   <span class="license-badge">{{ violation.license || 'Unknown' }}</span>
                   <span class="rule-name">{{ violation.rule }}</span>
                 </div>
-                <div class="violation-expand">
-                  <i :class="expandedViolations.has(index) ? 'pi pi-chevron-up' : 'pi pi-chevron-down'"></i>
+                <div class="violation-actions">
+                  <Button
+                    label="Review in Curation"
+                    icon="pi pi-pencil"
+                    severity="secondary"
+                    size="small"
+                    @click.stop="addToCuration(violation.dependency, violation.license, getEnhancedViolation(violation.dependency)?.dependencyId)"
+                    :loading="addingToCuration === violation.dependency"
+                    class="curation-btn"
+                    title="Open this dependency in the curation session for manual license review"
+                  />
+                  <i :class="expandedViolations.has(index) ? 'pi pi-chevron-up' : 'pi pi-chevron-down'" class="expand-icon"></i>
                 </div>
               </div>
 
@@ -701,12 +1009,32 @@ onMounted(fetchData)
         <div class="section">
           <div class="section-header">
             <h2>Dependencies ({{ total }})</h2>
-            <input
-              v-model="filter"
-              type="text"
-              placeholder="Filter dependencies..."
-              class="filter-input"
-            />
+            <div class="header-right">
+              <div class="curation-summary" v-if="policyReport">
+                <span class="curation-stat must-curate" v-if="curationStats.mustCurate > 0">
+                  <i class="pi pi-exclamation-triangle"></i>
+                  {{ curationStats.mustCurate }} must curate
+                </span>
+                <span class="curation-stat review" v-if="curationStats.reviewRecommended > 0">
+                  <i class="pi pi-eye"></i>
+                  {{ curationStats.reviewRecommended }} review
+                </span>
+                <span class="curation-stat safe" v-if="curationStats.safeToIgnore > 0">
+                  <i class="pi pi-check"></i>
+                  {{ curationStats.safeToIgnore }} safe
+                </span>
+                <span class="curation-stat resolved">
+                  <i class="pi pi-check-circle"></i>
+                  {{ curationStats.resolved }} resolved
+                </span>
+              </div>
+              <input
+                v-model="filter"
+                type="text"
+                placeholder="Filter dependencies..."
+                class="filter-input"
+              />
+            </div>
           </div>
 
           <DataTable
@@ -717,26 +1045,59 @@ onMounted(fetchData)
             :paginator="filteredDependencies.length > 20"
             :rows="20"
           >
+            <!-- Curation Priority Column -->
+            <Column header="Curation" style="width: 150px">
+              <template #body="{ data }">
+                <div class="curation-cell">
+                  <Badge
+                    :value="getCurationBadge(assessCurationNeed(data).category).label"
+                    :severity="getCurationBadge(assessCurationNeed(data).category).severity"
+                    class="curation-badge"
+                  />
+                  <Button
+                    v-if="assessCurationNeed(data).category === 'MUST_CURATE' || assessCurationNeed(data).category === 'REVIEW_RECOMMENDED'"
+                    icon="pi pi-pencil"
+                    severity="secondary"
+                    size="small"
+                    rounded
+                    text
+                    @click="addToCuration(data.name, data.concludedLicense || '', data.id)"
+                    :loading="addingToCuration === data.name"
+                    title="Review in Curation"
+                    class="curate-btn"
+                  />
+                </div>
+              </template>
+            </Column>
+
             <Column field="name" header="Package" style="min-width: 200px" sortable>
               <template #body="{ data }">
                 <div>
                   <strong>{{ data.name }}</strong>
                   <div class="dep-id">{{ data.id }}</div>
+                  <div v-if="assessCurationNeed(data).category === 'MUST_CURATE'" class="curation-reason">
+                    {{ assessCurationNeed(data).reasons[0] }}
+                  </div>
                 </div>
               </template>
             </Column>
 
-            <Column field="version" header="Version" style="width: 120px" sortable />
+            <Column field="version" header="Version" style="width: 100px" sortable />
 
-            <Column header="License" style="width: 150px">
+            <Column header="License" style="width: 180px">
               <template #body="{ data }">
-                <span class="license-badge">
-                  {{ data.concludedLicense || data.declaredLicenses[0] || 'Unknown' }}
-                </span>
+                <div class="license-cell">
+                  <span class="license-badge" :class="{ 'license-unknown': !data.concludedLicense || data.concludedLicense === 'UNKNOWN' }">
+                    {{ data.concludedLicense || data.declaredLicenses[0] || 'Unknown' }}
+                  </span>
+                  <div v-if="data.detectedLicenses?.length > 0 && data.detectedLicenses.join(',') !== data.declaredLicenses?.join(',')" class="detected-licenses">
+                    <small>Detected: {{ data.detectedLicenses.slice(0, 2).join(', ') }}{{ data.detectedLicenses.length > 2 ? '...' : '' }}</small>
+                  </div>
+                </div>
               </template>
             </Column>
 
-            <Column field="isResolved" header="Status" style="width: 120px">
+            <Column header="Status" style="width: 100px">
               <template #body="{ data }">
                 <Badge v-if="data.isResolved" value="Resolved" severity="success" />
                 <Badge v-else value="Unresolved" severity="warning" />
@@ -1086,13 +1447,29 @@ onMounted(fetchData)
   flex-wrap: wrap;
 }
 
-.violation-expand i {
+.violation-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.violation-actions .expand-icon {
   color: #64748b;
   transition: transform 0.2s;
 }
 
-.violation-card.expanded .violation-expand i {
+.violation-card.expanded .violation-actions .expand-icon {
   transform: rotate(180deg);
+}
+
+.curation-btn {
+  font-size: 0.75rem !important;
+  padding: 0.375rem 0.75rem !important;
+}
+
+.curation-btn:hover {
+  background: #3b82f6 !important;
+  color: white !important;
 }
 
 .violation-card .violation-message {
@@ -1568,5 +1945,92 @@ onMounted(fetchData)
 .no-curation p {
   color: #64748b;
   margin: 0;
+}
+
+/* Dependencies Section Header */
+.section-header .header-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.curation-summary {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.8rem;
+}
+
+.curation-stat {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+}
+
+.curation-stat.must-curate {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.curation-stat.review {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.curation-stat.safe {
+  background: #d1fae5;
+  color: #059669;
+}
+
+.curation-stat.resolved {
+  background: #e0e7ff;
+  color: #4f46e5;
+}
+
+/* Curation Cell in Dependencies Table */
+.curation-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.curation-badge {
+  font-size: 0.7rem !important;
+}
+
+.curate-btn {
+  width: 1.75rem !important;
+  height: 1.75rem !important;
+}
+
+.curation-reason {
+  font-size: 0.7rem;
+  color: #dc2626;
+  margin-top: 0.25rem;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* License Cell */
+.license-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.license-unknown {
+  background: #fee2e2 !important;
+  color: #dc2626 !important;
+}
+
+.detected-licenses {
+  color: #64748b;
+}
+
+.detected-licenses small {
+  font-size: 0.7rem;
 }
 </style>

@@ -44,6 +44,7 @@ class ExplanationGenerator(
 
     /**
      * Generate explanations for why this violation occurred.
+     * Based on CURATION-DECISION-STRATEGY.md cheat sheet
      */
     fun generateExplanations(violation: PolicyViolation): List<ViolationExplanation> {
         val explanations = mutableListOf<ViolationExplanation>()
@@ -52,14 +53,32 @@ class ExplanationGenerator(
 
         logger.debug { "Generating explanations for ${violation.license} (normalized: $licenseId)" }
 
+        // Detect specific curation scenarios from CURATION-DECISION-STRATEGY.md
+        val license = violation.license.uppercase()
+
+        // MUST CURATE: Unknown or NOASSERTION license
+        if (license == "UNKNOWN" || license == "NOASSERTION" || license.isEmpty()) {
+            explanations.add(generateUnknownLicenseExplanation(violation))
+        }
+
+        // MUST CURATE: OR/AND license expression ambiguity
+        if (violation.license.contains(" OR ") || violation.license.contains(" AND ")) {
+            explanations.add(generateLicenseExpressionExplanation(violation))
+        }
+
         // 1. WHY_PROHIBITED - Explain the rule match
         explanations.add(generateWhyProhibitedExplanation(violation, licenseNode))
 
         // 2. COPYLEFT_RISK - If license has copyleft
-        licenseNode?.let { license ->
-            if (license.copyleftStrength != CopyleftStrength.NONE) {
-                explanations.add(generateCopyleftRiskExplanation(violation, license))
+        licenseNode?.let { node ->
+            if (node.copyleftStrength != CopyleftStrength.NONE) {
+                explanations.add(generateCopyleftRiskExplanation(violation, node))
             }
+        }
+
+        // Also check for copyleft in OR expressions
+        if (licenseNode == null && hasAnyCopyleftInExpression(violation.license)) {
+            explanations.add(generateCopyleftExpressionExplanation(violation))
         }
 
         // 3. OBLIGATION_CONCERN - Key obligations from the license
@@ -69,21 +88,125 @@ class ExplanationGenerator(
         }
 
         // 4. RISK_LEVEL - Overall risk assessment
-        licenseNode?.let { license ->
-            if (license.category.riskLevel >= 3) {
-                explanations.add(generateRiskLevelExplanation(violation, license))
+        licenseNode?.let { node ->
+            if (node.category.riskLevel >= 3) {
+                explanations.add(generateRiskLevelExplanation(violation, node))
             }
         }
 
         // 5. PROPAGATION_RISK - For copyleft licenses in certain scopes
-        licenseNode?.let { license ->
-            if (license.copyleftStrength.propagationLevel >= 2 &&
+        licenseNode?.let { node ->
+            if (node.copyleftStrength.propagationLevel >= 2 &&
                 violation.scope in listOf("compile", "runtime", "implementation")) {
-                explanations.add(generatePropagationRiskExplanation(violation, license))
+                explanations.add(generatePropagationRiskExplanation(violation, node))
             }
         }
 
         return explanations
+    }
+
+    /**
+     * Check if a license expression contains any copyleft licenses
+     */
+    private fun hasAnyCopyleftInExpression(license: String): Boolean {
+        val copyleftPrefixes = listOf("GPL", "AGPL", "LGPL", "SSPL", "EPL", "MPL", "CDDL", "CPL", "OSL")
+        return copyleftPrefixes.any { license.uppercase().contains(it) }
+    }
+
+    /**
+     * Generate explanation for UNKNOWN or missing license
+     * From CURATION-DECISION-STRATEGY.md: "No license ≠ permissive. Silence is risk."
+     */
+    private fun generateUnknownLicenseExplanation(violation: PolicyViolation): ViolationExplanation {
+        val details = mutableListOf(
+            "The license for ${violation.dependencyName} is unknown or not specified",
+            "No license does NOT mean permissive - absence of a license typically means all rights reserved",
+            "Using software without a clear license exposes you to legal risk",
+            "Auditors will flag this as a compliance gap requiring documentation"
+        )
+
+        return ViolationExplanation(
+            type = ExplanationType.WHY_PROHIBITED,
+            title = "🔴 MUST CURATE: Unknown/Missing License",
+            summary = "This dependency has no clear license. Manual review is required to determine the actual license and document your decision.",
+            details = details,
+            context = ExplanationContext(
+                licenseCategory = "unknown",
+                riskLevel = 5
+            )
+        )
+    }
+
+    /**
+     * Generate explanation for OR/AND license expressions
+     * From CURATION-DECISION-STRATEGY.md: "OR vs AND changes everything. ORT will not guess for you."
+     */
+    private fun generateLicenseExpressionExplanation(violation: PolicyViolation): ViolationExplanation {
+        val isOr = violation.license.contains(" OR ")
+        val isAnd = violation.license.contains(" AND ")
+
+        val details = mutableListOf<String>()
+
+        if (isOr) {
+            details.add("This dependency uses an OR license expression: ${violation.license}")
+            details.add("OR means you can CHOOSE which license to comply with")
+            details.add("You must explicitly document which license you're choosing")
+            details.add("Automated tools cannot make this choice for you - it depends on your use case")
+        }
+
+        if (isAnd) {
+            details.add("This dependency uses an AND license expression: ${violation.license}")
+            details.add("AND means you must comply with ALL listed licenses simultaneously")
+            details.add("Review each license's obligations and ensure you can meet all of them")
+        }
+
+        details.add("Auditors will ask: 'Which license applies to your distribution?'")
+
+        val title = when {
+            isOr && isAnd -> "🔴 MUST CURATE: Complex License Expression (OR + AND)"
+            isOr -> "🔴 MUST CURATE: OR License Expression - Choice Required"
+            else -> "🔴 MUST CURATE: AND License Expression - Multiple Obligations"
+        }
+
+        return ViolationExplanation(
+            type = ExplanationType.WHY_PROHIBITED,
+            title = title,
+            summary = if (isOr) {
+                "This license expression requires you to explicitly choose which license applies. Document your choice."
+            } else {
+                "This license expression requires compliance with multiple licenses simultaneously."
+            },
+            details = details,
+            context = ExplanationContext(
+                licenseCategory = if (isOr) "dual-license" else "multi-license"
+            )
+        )
+    }
+
+    /**
+     * Generate explanation for copyleft licenses found in OR expressions
+     */
+    private fun generateCopyleftExpressionExplanation(violation: PolicyViolation): ViolationExplanation {
+        val copyleftLicenses = listOf("GPL", "AGPL", "LGPL", "SSPL", "EPL", "MPL")
+        val foundCopyleft = copyleftLicenses.filter { violation.license.uppercase().contains(it) }
+
+        val details = mutableListOf(
+            "This license expression contains copyleft license(s): ${foundCopyleft.joinToString(", ")}",
+            "Even though there may be permissive alternatives in the expression, the presence of copyleft requires careful review",
+            "If you're using an OR expression with copyleft, document that you're choosing the permissive option",
+            "If you're using an AND expression with copyleft, you must comply with the copyleft obligations"
+        )
+
+        return ViolationExplanation(
+            type = ExplanationType.COPYLEFT_RISK,
+            title = "Copyleft License in Expression",
+            summary = "The license expression contains ${foundCopyleft.joinToString("/")} which has copyleft requirements.",
+            details = details,
+            context = ExplanationContext(
+                copyleftStrength = "varies",
+                relatedLicenses = foundCopyleft
+            )
+        )
     }
 
     /**

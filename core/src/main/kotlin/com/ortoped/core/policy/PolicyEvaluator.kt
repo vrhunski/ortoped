@@ -176,7 +176,8 @@ class PolicyEvaluator(
 
         val matches = when {
             // Category-based matching
-            rule.category != null -> category == rule.category
+            rule.category != null -> category == rule.category ||
+                (rule.category == "unknown" && category == "dual-license") // Dual-license also requires review
 
             // Denylist matching
             rule.denylist != null -> license.uppercase() in rule.denylist.map { it.uppercase() }
@@ -195,7 +196,8 @@ class PolicyEvaluator(
             return true to null
         }
 
-        val message = formatMessage(rule.message ?: "Policy violation", dependency, license)
+        // Generate a more specific message based on the actual issue
+        val specificMessage = generateSpecificMessage(rule, dependency, license, category)
 
         val violation = PolicyViolation(
             ruleId = rule.id,
@@ -207,10 +209,103 @@ class PolicyEvaluator(
             license = license,
             licenseCategory = category,
             scope = dependency.scope,
-            message = message
+            message = specificMessage
         )
-        
+
         return true to violation
+    }
+
+    /**
+     * Generate a specific message based on the actual issue detected
+     * Following CURATION-DECISION-STRATEGY.md guidelines
+     */
+    private fun generateSpecificMessage(
+        rule: PolicyRule,
+        dependency: Dependency,
+        license: String,
+        category: String
+    ): String {
+        val upperLicense = license.uppercase()
+
+        // Check for specific scenarios and provide targeted messages
+        return when {
+            // Unknown/NOASSERTION license
+            upperLicense == "UNKNOWN" || upperLicense == "NOASSERTION" || license.isBlank() -> {
+                "🔴 MUST CURATE: ${dependency.name} has unknown/missing license. " +
+                "No license ≠ permissive. Manual review required to determine actual license."
+            }
+
+            // OR expression with copyleft
+            license.contains(" OR ") && hasAnyCopyleft(license) -> {
+                val copyleftLicenses = extractCopyleftFromExpression(license)
+                "🔴 MUST CURATE: ${dependency.name} has dual-license ($license). " +
+                "Contains copyleft option ($copyleftLicenses). " +
+                "You must explicitly document which license you choose."
+            }
+
+            // OR expression (permissive only)
+            license.contains(" OR ") -> {
+                "🟡 REVIEW: ${dependency.name} has OR license expression ($license). " +
+                "Document which license applies to your use case."
+            }
+
+            // AND expression
+            license.contains(" AND ") -> {
+                "🔴 MUST CURATE: ${dependency.name} requires compliance with multiple licenses ($license). " +
+                "Review all obligations - you must satisfy ALL of them."
+            }
+
+            // Declared ≠ Detected (check if there's a mismatch)
+            dependency.detectedLicenses.isNotEmpty() &&
+            dependency.declaredLicenses.isNotEmpty() &&
+            dependency.declaredLicenses.toSet() != dependency.detectedLicenses.toSet() -> {
+                val declared = dependency.declaredLicenses.joinToString(", ")
+                val detected = dependency.detectedLicenses.joinToString(", ")
+                "🔴 MUST CURATE: ${dependency.name} has license mismatch. " +
+                "Declared: [$declared] vs Detected: [$detected]. " +
+                "Auditors will ask: which is correct?"
+            }
+
+            // Copyleft license
+            category.contains("copyleft") -> {
+                "🔴 MUST CURATE: ${dependency.name} uses copyleft license ($license). " +
+                "This may trigger distribution obligations. Review and document compliance approach."
+            }
+
+            // Category is unknown but license isn't empty
+            category == "unknown" && license.isNotBlank() -> {
+                "🔴 MUST CURATE: ${dependency.name} has unrecognized license ($license). " +
+                "License not in policy categories. Manual review required."
+            }
+
+            // Dual-license category
+            category == "dual-license" -> {
+                "🔴 MUST CURATE: ${dependency.name} has dual-license options. " +
+                "Explicit license choice required and must be documented."
+            }
+
+            // Default to rule message
+            else -> formatMessage(rule.message ?: "Policy violation for ${dependency.name}", dependency, license)
+        }
+    }
+
+    /**
+     * Check if license expression contains any copyleft licenses
+     */
+    private fun hasAnyCopyleft(license: String): Boolean {
+        val copyleftPrefixes = listOf("GPL", "AGPL", "LGPL", "SSPL", "EPL", "MPL", "CDDL", "CPL", "OSL", "EUPL")
+        return copyleftPrefixes.any { license.uppercase().contains(it) }
+    }
+
+    /**
+     * Extract copyleft license names from an expression
+     */
+    private fun extractCopyleftFromExpression(license: String): String {
+        val copyleftPrefixes = listOf("GPL", "AGPL", "LGPL", "SSPL", "EPL", "MPL", "CDDL", "CPL", "OSL", "EUPL")
+        val parts = license.split(Regex("\\s+(OR|AND)\\s+", RegexOption.IGNORE_CASE))
+        return parts.filter { part ->
+            copyleftPrefixes.any { prefix -> part.uppercase().contains(prefix) }
+        }.joinToString(", ")
     }
 
     /**

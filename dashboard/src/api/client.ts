@@ -303,7 +303,7 @@ export interface CurationItem {
 
 export interface CurationDecision {
   action: 'ACCEPT' | 'REJECT' | 'MODIFY'
-  curatedLicense?: string
+  license?: string
   comment?: string
   curatorId?: string
 }
@@ -541,15 +541,25 @@ export const api = {
   getCurationItem: (scanId: string, dependencyId: string) =>
     apiClient.get<CurationItem>(`/scans/${scanId}/curation/items/${dependencyId}`),
 
+  // Add a dependency to curation manually (for policy violations)
+  addToCuration: (scanId: string, dependencyId: string, reason?: string) =>
+    apiClient.post<{ success: boolean; item?: CurationItem; message: string }>(
+      `/scans/${scanId}/curation/items/add`,
+      { dependencyId, reason }
+    ),
+
   submitCurationDecision: (scanId: string, dependencyId: string, decision: CurationDecision) =>
     apiClient.put<CurationItem>(`/scans/${scanId}/curation/items/${dependencyId}`, decision),
+
+  validateSpdxForItem: (scanId: string, dependencyId: string) =>
+    apiClient.post<CurationItem>(`/scans/${scanId}/curation/items/${dependencyId}/validate-spdx`),
 
   bulkCurationDecision: (scanId: string, dependencyIds: string[], decision: CurationDecision) =>
     apiClient.post<{ updated: number; results: CurationItem[] }>(`/scans/${scanId}/curation/bulk`, {
       decisions: dependencyIds.map(id => ({
         dependencyId: id,
         action: decision.action,
-        curatedLicense: decision.curatedLicense,
+        license: decision.license,
         comment: decision.comment
       }))
     }),
