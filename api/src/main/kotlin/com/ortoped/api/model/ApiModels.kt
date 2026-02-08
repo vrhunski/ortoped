@@ -125,6 +125,17 @@ data class DependencyListResponse(
 )
 
 // =====================
+// Scan Import Models (Phase B)
+// =====================
+
+@Serializable
+data class ImportScanRequest(
+    val projectId: String? = null,
+    val projectName: String? = null,
+    val result: com.ortoped.core.model.ScanResult
+)
+
+// =====================
 // Package Manager Models
 // =====================
 

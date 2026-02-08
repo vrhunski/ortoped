@@ -41,6 +41,7 @@ services:
       - "8080:8080"
     volumes:
       - ./logs:/app/logs
+      - ./.env:/app/.env:ro
     networks:
       - ortoped-network
 
@@ -53,6 +54,7 @@ services:
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     volumes:
+      - ./.env:/app/.env:ro
       - ./projects:/projects:ro
       - ./reports:/reports
     profiles:

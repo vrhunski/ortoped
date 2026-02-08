@@ -216,6 +216,22 @@ class CurationRepository {
         updated > 0
     }
 
+    fun updateAiSuggestion(
+        id: UUID,
+        suggestedLicense: String,
+        confidence: String,
+        reasoning: String,
+        alternatives: String? = null
+    ): Boolean = transaction {
+        val updated = Curations.update({ Curations.id eq id }) {
+            it[aiSuggestedLicense] = suggestedLicense
+            it[aiConfidence] = confidence
+            it[aiReasoning] = reasoning
+            it[aiAlternatives] = alternatives
+        }
+        updated > 0
+    }
+
     fun updatePriority(
         id: UUID,
         priorityLevel: PriorityLevel,

@@ -406,6 +406,47 @@ export interface BulkValidationItem {
 
 export type LicenseValidationResponse = BulkValidationResponse
 
+// AI Resolution Types (Phase B)
+export interface BulkAiResolutionResponse {
+  resolved: number
+  autoAccepted: number
+  failed: number
+  results: AiResolutionResult[]
+}
+
+export interface AiResolutionResult {
+  dependencyId: string
+  success: boolean
+  suggestion?: AiSuggestion
+  error?: string
+}
+
+// Native Curation Export Types (Phase B)
+export interface NativeCurationExport {
+  version: string
+  scanId: string
+  exportedAt: string
+  curations: NativeCurationExportItem[]
+}
+
+export interface NativeCurationExportItem {
+  packageId: string
+  concludedLicense: string
+  aiConfidence?: string
+  aiReasoning?: string
+  curatedBy?: string
+  curatedAt?: string
+  status: string
+  justification?: string
+  approvedBy?: string
+}
+
+// Policy Impact Types (Phase B)
+export interface PolicyImpactResponse {
+  violationsResolved: number
+  violationDetails: string[]
+}
+
 // Package Manager Types
 export interface PackageManagerInfo {
   name: string
@@ -628,7 +669,26 @@ export const api = {
     apiClient.get<{ licenses: SpdxLicenseInfo[] }>('/licenses/spdx/common'),
 
   validateLicenses: (licenseIds: string[]) =>
-    apiClient.post<LicenseValidationResponse>('/licenses/validate', { licenseIds })
+    apiClient.post<LicenseValidationResponse>('/licenses/validate', { licenseIds }),
+
+  // On-Demand AI Resolution (Phase B)
+  resolveWithAi: (scanId: string, dependencyId: string) =>
+    apiClient.post<AiSuggestion>(`/scans/${scanId}/curation/resolve-ai/${dependencyId}`),
+
+  resolveAllWithAi: (scanId: string, confidenceThreshold = 'HIGH') =>
+    apiClient.post<BulkAiResolutionResponse>(`/scans/${scanId}/curation/resolve-ai`, { confidenceThreshold }),
+
+  // Native Curation Export (Phase B)
+  exportNativeCurations: (scanId: string) =>
+    apiClient.get<NativeCurationExport>(`/scans/${scanId}/curation/export/curations-native`),
+
+  // Policy Impact (Phase B)
+  getPolicyImpact: (scanId: string, dependencyId: string) =>
+    apiClient.get<PolicyImpactResponse>(`/scans/${scanId}/curation/items/${dependencyId}/policy-impact`),
+
+  // Scan Import (Phase B)
+  importScan: (projectId: string, result: object) =>
+    apiClient.post<Scan>('/scans/import', { projectId, result })
 }
 
 export default apiClient
