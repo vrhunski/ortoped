@@ -4,6 +4,7 @@ import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.options.*
+import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.file
 import com.ortoped.core.cache.LocalFileCache
 import com.ortoped.core.policy.PolicyYamlLoader
@@ -15,9 +16,109 @@ import com.ortoped.core.scanner.SourceCodeScanner
 import com.ortoped.core.vcs.RemoteRepositoryHandler
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import java.io.File
+import java.net.ConnectException
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.net.http.HttpTimeoutException
+import java.net.URI
+import java.time.Duration
 
 private val logger = KotlinLogging.logger {}
+
+// ============================================================================
+// HTTP Client Helper (lightweight, no new dependencies)
+// ============================================================================
+
+private data class HttpResult(val statusCode: Int, val body: String)
+
+private object OrtopedHttpClient {
+    private val client = HttpClient.newBuilder()
+        .followRedirects(HttpClient.Redirect.NEVER)
+        .build()
+
+    fun post(url: String, body: String): HttpResult {
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .header("Content-Type", "application/json")
+            .timeout(Duration.ofSeconds(120))
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build()
+        return execute(request)
+    }
+
+    fun get(url: String): HttpResult {
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .header("Accept", "application/json")
+            .timeout(Duration.ofSeconds(30))
+            .GET()
+            .build()
+        return execute(request)
+    }
+
+    private fun execute(request: HttpRequest): HttpResult {
+        logger.debug { "HTTP ${request.method()} ${request.uri()}" }
+        try {
+            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+            logger.debug { "Response: ${response.statusCode()}" }
+            return HttpResult(response.statusCode(), response.body())
+        } catch (e: ConnectException) {
+            throw CliktError("Cannot connect to server at ${request.uri().host}:${request.uri().port}. Is the server running?")
+        } catch (e: HttpTimeoutException) {
+            throw CliktError("Request timed out connecting to ${request.uri()}")
+        }
+    }
+}
+
+// Minimal response models (CLI doesn't depend on :api module)
+
+@Serializable
+private data class ImportResponse(
+    val id: String,
+    val projectId: String? = null,
+    val status: String,
+    val createdAt: String? = null
+)
+
+@Serializable
+private data class CurationsYamlResponse(
+    val yaml: String,
+    val filename: String = "curations.yml"
+)
+
+@Serializable
+private data class NativeCurationExportResponse(
+    val version: String = "1.0",
+    val scanId: String = "",
+    val exportedAt: String = "",
+    val curations: List<NativeCurationExportItem> = emptyList()
+)
+
+@Serializable
+private data class NativeCurationExportItem(
+    val packageId: String = "",
+    val concludedLicense: String = "",
+    val status: String = ""
+)
+
+@Serializable
+private data class NoticeFileResponse(
+    val content: String,
+    val filename: String = "NOTICE"
+)
+
+@Serializable
+private data class ImportScanRequestCli(
+    val projectId: String? = null,
+    val projectName: String? = null,
+    val result: com.ortoped.core.model.ScanResult
+)
+
+private val cliJson = Json { ignoreUnknownKeys = true; prettyPrint = true }
 
 class OrtopedCli : CliktCommand(
     name = "ortoped",
@@ -679,8 +780,216 @@ class VersionCommand : CliktCommand(
     }
 }
 
+// ============================================================================
+// Curate Commands
+// ============================================================================
+
+class CurateCommand : CliktCommand(
+    name = "curate",
+    help = "Import scan results to dashboard and export curations"
+) {
+    override fun run() = Unit // group command, delegates to subcommands
+}
+
+class CurateImportCommand : CliktCommand(
+    name = "import",
+    help = "Import a scan report into the OrtoPed dashboard for curation"
+) {
+    private val inputFile by option(
+        "-i", "--input",
+        help = "Scan report JSON file (from ortoped scan)"
+    ).file(mustExist = true)
+        .required()
+
+    private val serverUrl by option(
+        "-s", "--server",
+        help = "OrtoPed server URL (default: ORTOPED_SERVER env or http://localhost:8080)"
+    ).default(System.getenv("ORTOPED_SERVER") ?: "http://localhost:8080")
+
+    private val projectName by option(
+        "--project-name",
+        help = "Project name (default: from scan result)"
+    )
+
+    private val projectId by option(
+        "--project-id",
+        help = "Existing project UUID to associate the scan with"
+    )
+
+    override fun run() {
+        echo("Importing scan report: ${inputFile.name}")
+
+        // Read and validate the JSON
+        val rawJson = inputFile.readText()
+        val scanResult = try {
+            cliJson.decodeFromString<com.ortoped.core.model.ScanResult>(rawJson)
+        } catch (e: Exception) {
+            throw CliktError("Invalid scan report: ${e.message}")
+        }
+
+        // Build the import request using proper JSON serialization
+        val effectiveProjectName = projectName ?: inputFile.nameWithoutExtension
+        val importRequest = ImportScanRequestCli(
+            projectId = projectId,
+            projectName = effectiveProjectName,
+            result = scanResult
+        )
+        val requestBody = cliJson.encodeToString(ImportScanRequestCli.serializer(), importRequest)
+
+        // POST to server
+        val url = "${serverUrl.trimEnd('/')}/api/v1/scans/import"
+        echo("Sending to: $url")
+
+        val result = OrtopedHttpClient.post(url, requestBody)
+
+        when {
+            result.statusCode == 201 -> {
+                val response = try {
+                    cliJson.decodeFromString<ImportResponse>(result.body)
+                } catch (e: Exception) {
+                    throw CliktError("Unexpected server response: ${result.body}")
+                }
+
+                echo()
+                echo("Scan imported successfully!")
+                echo("  Scan ID:  ${response.id}")
+                if (response.projectId != null) {
+                    echo("  Project:  ${response.projectId}")
+                }
+                echo("  Status:   ${response.status}")
+                echo()
+                echo("Next steps:")
+                echo("  1. Open the dashboard to curate licenses")
+                echo("  2. Export curations when done:")
+                echo("     ortoped curate export -s ${response.id}")
+            }
+            result.statusCode in 400..499 -> {
+                throw CliktError("Import rejected (HTTP ${result.statusCode}): ${result.body}")
+            }
+            result.statusCode in 500..599 -> {
+                throw CliktError("Server error (HTTP ${result.statusCode}). Try again later.")
+            }
+            else -> {
+                throw CliktError("Import failed (HTTP ${result.statusCode}): ${result.body}")
+            }
+        }
+    }
+}
+
+class CurateExportCommand : CliktCommand(
+    name = "export",
+    help = "Export curations from the dashboard as files for your project"
+) {
+    private val scanId by option(
+        "-s", "--scan-id",
+        help = "Scan ID to export curations from"
+    ).required().validate {
+        require(it.matches(Regex("[a-zA-Z0-9_-]+"))) {
+            "Scan ID must contain only alphanumeric characters, hyphens, and underscores"
+        }
+    }
+
+    private val serverUrl by option(
+        "--server",
+        help = "OrtoPed server URL (default: ORTOPED_SERVER env or http://localhost:8080)"
+    ).default(System.getenv("ORTOPED_SERVER") ?: "http://localhost:8080")
+
+    private val format by option(
+        "-f", "--format",
+        help = "Export format: yaml (default), native, notice, or all"
+    ).choice("yaml", "native", "notice", "all")
+        .default("yaml")
+
+    private val outputDir by option(
+        "-o", "--output-dir",
+        help = "Output directory (default: .ortoped)"
+    ).file()
+        .default(File(".ortoped"))
+
+    override fun run() {
+        val baseUrl = "${serverUrl.trimEnd('/')}/api/v1/scans/$scanId/curation/export"
+        val formats = if (format == "all") listOf("yaml", "native", "notice") else listOf(format)
+        val writtenFiles = mutableListOf<String>()
+        val canonicalOutputDir = outputDir.canonicalFile
+
+        canonicalOutputDir.mkdirs()
+
+        for (fmt in formats) {
+            try {
+                when (fmt) {
+                    "yaml" -> {
+                        val result = OrtopedHttpClient.get("$baseUrl/curations-yaml")
+                        if (result.statusCode != 200) {
+                            echo("Warning: Failed to export curations YAML (HTTP ${result.statusCode})", err = true)
+                            continue
+                        }
+                        val response = cliJson.decodeFromString<CurationsYamlResponse>(result.body)
+                        val file = safeOutputFile(canonicalOutputDir, response.filename)
+                        file.writeText(response.yaml)
+                        writtenFiles.add(file.path)
+                        echo("  Wrote ${file.path}")
+                    }
+                    "native" -> {
+                        val result = OrtopedHttpClient.get("$baseUrl/curations-native")
+                        if (result.statusCode != 200) {
+                            echo("Warning: Failed to export native curations (HTTP ${result.statusCode})", err = true)
+                            continue
+                        }
+                        // Pretty-print the native JSON
+                        val parsed = cliJson.parseToJsonElement(result.body)
+                        val prettyJson = cliJson.encodeToString(kotlinx.serialization.json.JsonElement.serializer(), parsed)
+                        val file = safeOutputFile(canonicalOutputDir, "curations.ortoped.json")
+                        file.writeText(prettyJson)
+                        writtenFiles.add(file.path)
+                        echo("  Wrote ${file.path}")
+                    }
+                    "notice" -> {
+                        val result = OrtopedHttpClient.get("$baseUrl/notice")
+                        if (result.statusCode != 200) {
+                            echo("Warning: Failed to export NOTICE file (HTTP ${result.statusCode})", err = true)
+                            continue
+                        }
+                        val response = cliJson.decodeFromString<NoticeFileResponse>(result.body)
+                        val file = safeOutputFile(canonicalOutputDir, response.filename)
+                        file.writeText(response.content)
+                        writtenFiles.add(file.path)
+                        echo("  Wrote ${file.path}")
+                    }
+                }
+            } catch (e: CliktError) {
+                throw e // Re-throw connection errors
+            } catch (e: Exception) {
+                echo("Warning: Failed to export $fmt format: ${e.message}", err = true)
+            }
+        }
+
+        echo()
+        if (writtenFiles.isEmpty()) {
+            throw CliktError("No files were exported. Check the scan ID and server connection.")
+        }
+
+        echo("Exported ${writtenFiles.size} file(s) to ${outputDir.path}/")
+        if (writtenFiles.any { it.endsWith("curations.yml") }) {
+            echo("Curations will be auto-applied on next scan: ortoped scan -p .")
+        }
+    }
+
+    private fun safeOutputFile(baseDir: File, filename: String): File {
+        val sanitized = filename.replace("..", "").replace("/", "").replace("\\", "")
+        val file = File(baseDir, sanitized).canonicalFile
+        require(file.startsWith(baseDir)) {
+            "Filename '$filename' escapes output directory"
+        }
+        return file
+    }
+}
+
 fun main(args: Array<String>) {
     OrtopedCli()
-        .subcommands(InitCommand(), ScanCommand(), SbomCommand(), PolicyCommand(), VersionCommand())
+        .subcommands(
+            InitCommand(), ScanCommand(), SbomCommand(), PolicyCommand(),
+            CurateCommand().subcommands(CurateImportCommand(), CurateExportCommand()),
+            VersionCommand()
+        )
         .main(args)
 }
