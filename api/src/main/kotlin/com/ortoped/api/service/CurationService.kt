@@ -455,10 +455,14 @@ class CurationService(
         val curation = curationRepository.findByDependencyId(session.id, dependencyId)
             ?: throw NotFoundException("Curation item not found: $dependencyId")
 
-        // Get the license to validate
+        // Get the license to validate - fall back through all available license sources
+        val declaredFirst = curation.declaredLicenses?.let {
+            try { json.decodeFromString<List<String>>(it).firstOrNull() } catch (e: Exception) { null }
+        }
         val licenseToValidate = curation.curatedLicense
             ?: curation.aiSuggestedLicense
             ?: curation.originalLicense
+            ?: declaredFirst
             ?: throw BadRequestException("No license to validate for this item")
 
         validateAndUpdateSpdxInfo(curation.id, licenseToValidate)

@@ -1491,7 +1491,7 @@ onMounted(initializeData)
               <div class="license-comparison">
                 <div class="license-box original">
                   <label>Original License</label>
-                  <span>{{ currentItem.originalConcludedLicense || 'Unknown' }}</span>
+                  <span>{{ currentItem.originalConcludedLicense || currentItem.declaredLicenses?.[0] || 'Unknown' }}</span>
                 </div>
                 <i class="pi pi-arrow-right"></i>
                 <div class="license-box suggested">
@@ -1518,6 +1518,18 @@ onMounted(initializeData)
                   <span v-if="currentItem.spdxLicense || currentItem.aiSuggestion?.spdxId" :class="['spdx-badge', getSpdxValidationClass(currentItem.spdxValidated)]">
                     {{ currentItem.spdxValidated ? '✓ Valid' : '⚠ Needs Review' }}
                   </span>
+                </div>
+              </div>
+
+              <!-- Declared & Detected Licenses Context -->
+              <div v-if="currentItem.declaredLicenses?.length || currentItem.detectedLicenses?.length" class="license-context-box">
+                <div v-if="currentItem.declaredLicenses?.length" class="license-context-row">
+                  <label>Declared Licenses:</label>
+                  <span v-for="(lic, idx) in currentItem.declaredLicenses" :key="'d-' + idx" class="license-tag declared">{{ lic }}</span>
+                </div>
+                <div v-if="currentItem.detectedLicenses?.length" class="license-context-row">
+                  <label>Detected Licenses:</label>
+                  <span v-for="(lic, idx) in currentItem.detectedLicenses" :key="'t-' + idx" class="license-tag detected">{{ lic }}</span>
                 </div>
               </div>
 
@@ -2650,6 +2662,48 @@ onMounted(initializeData)
 
 .license-box.spdx {
   background: #eff6ff;
+}
+
+.license-context-box {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: #fafafa;
+  border-radius: 0.5rem;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.license-context-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.license-context-row label {
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 600;
+  min-width: 120px;
+}
+
+.license-tag {
+  font-size: 0.75rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.25rem;
+  font-weight: 500;
+}
+
+.license-tag.declared {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.license-tag.detected {
+  background: #fef3c7;
+  color: #92400e;
 }
 
 .spdx-info-box {

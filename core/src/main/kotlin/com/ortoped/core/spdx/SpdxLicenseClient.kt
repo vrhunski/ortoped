@@ -60,6 +60,11 @@ class SpdxLicenseClient(
             "bsd-3" to "BSD-3-Clause",
             "bsd 3-clause" to "BSD-3-Clause",
             "bsd-2" to "BSD-2-Clause",
+            "bsd license" to "BSD-3-Clause",
+            "the bsd license" to "BSD-3-Clause",
+            "bsd 2-clause" to "BSD-2-Clause",
+            "new bsd license" to "BSD-3-Clause",
+            "simplified bsd license" to "BSD-2-Clause",
             "gpl" to "GPL-3.0-only",
             "gpl3" to "GPL-3.0-only",
             "gpl-3" to "GPL-3.0-only",
@@ -202,18 +207,28 @@ class SpdxLicenseClient(
             )
         }
 
-        // Check aliases
-        val aliasMatch = LICENSE_ALIASES[licenseId.lowercase()]
-        if (aliasMatch != null) {
-            val license = licenseCache?.find { it.licenseId == aliasMatch }
-            if (license != null) {
-                return SpdxValidationResult(
-                    isValid = true,
-                    licenseId = aliasMatch,
-                    normalizedId = aliasMatch,
-                    suggestions = emptyList(),
-                    message = "Normalized from '$licenseId' to '$aliasMatch'"
-                )
+        // Check aliases (try original and with common prefixes stripped)
+        val lowered = licenseId.lowercase().trim()
+        val strippedVariants = buildList {
+            add(lowered)
+            // Strip leading articles like "The ", "A "
+            if (lowered.startsWith("the ")) add(lowered.removePrefix("the ").trimStart())
+            if (lowered.startsWith("a ")) add(lowered.removePrefix("a ").trimStart())
+        }
+
+        for (variant in strippedVariants) {
+            val aliasMatch = LICENSE_ALIASES[variant]
+            if (aliasMatch != null) {
+                val license = licenseCache?.find { it.licenseId == aliasMatch }
+                if (license != null) {
+                    return SpdxValidationResult(
+                        isValid = true,
+                        licenseId = aliasMatch,
+                        normalizedId = aliasMatch,
+                        suggestions = emptyList(),
+                        message = "Normalized from '$licenseId' to '$aliasMatch'"
+                    )
+                }
             }
         }
 
