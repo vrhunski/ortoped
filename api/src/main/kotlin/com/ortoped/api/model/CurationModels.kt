@@ -637,7 +637,8 @@ data class ApprovalStatusResponse(
     val submittedBy: String? = null,
     val submittedAt: String? = null,
     val approval: ApprovalRecordResponse? = null,
-    val readiness: ApprovalReadinessResponse? = null
+    val readiness: ApprovalReadinessResponse? = null,
+    val requireApproval: Boolean = true
 )
 
 /**

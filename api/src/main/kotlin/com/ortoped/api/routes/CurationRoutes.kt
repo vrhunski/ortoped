@@ -74,6 +74,25 @@ fun Route.curationRoutes(curationService: CurationService) {
             call.respond(HttpStatusCode.OK, response)
         }
 
+        /**
+         * Finalize session directly (when approval is disabled)
+         * POST /scans/{scanId}/curation/finalize
+         */
+        post("/finalize") {
+            val scanId = call.parameters["scanId"]
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
+
+            val curatorId = call.request.headers["X-Curator-Id"] ?: "anonymous"
+            val request = try {
+                call.receive<ApprovalRequest>()
+            } catch (e: Exception) {
+                ApprovalRequest()
+            }
+
+            val response = curationService.finalizeSession(scanId, curatorId, request.comment)
+            call.respond(HttpStatusCode.OK, response)
+        }
+
         // ====================================================================
         // Curation Items
         // ====================================================================

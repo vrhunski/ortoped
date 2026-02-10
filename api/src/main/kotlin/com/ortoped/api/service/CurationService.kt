@@ -29,7 +29,8 @@ class CurationService(
     private val curatedScanRepository: CuratedScanRepository,
     private val scanRepository: ScanRepository,
     private val licenseGraphService: LicenseGraphService? = null,
-    private val licenseResolver: CachingLicenseResolver? = null
+    private val licenseResolver: CachingLicenseResolver? = null,
+    private val settingsRepository: SettingsRepository? = null
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -1245,6 +1246,55 @@ class CurationService(
     }
 
     /**
+     * Finalize session without separate approver (when approval is disabled)
+     */
+    fun finalizeSession(
+        scanId: String,
+        curatorId: String,
+        comment: String? = null
+    ): ApprovalStatusResponse {
+        if (settingsRepository?.isApprovalRequired() == true) {
+            throw BadRequestException("Cannot finalize directly: approval workflow is enabled. Use submit-for-approval instead.")
+        }
+
+        val scanUuid = UUID.fromString(scanId)
+        val session = curationSessionRepository.findByScanId(scanUuid)
+            ?: throw NotFoundException("No curation session found for scan: $scanId")
+
+        // Only check that all items have decisions (no EU justification/OR license requirements)
+        val stats = curationRepository.getStatisticsBySessionId(session.id)
+        if (stats.pending > 0) {
+            throw BadRequestException("Cannot finalize: ${stats.pending} items still pending review")
+        }
+
+        // Approve directly — no approval record created, so DB trigger doesn't fire
+        curationSessionRepository.approve(session.id, curatorId, comment = comment)
+
+        // Mark scan as curation complete
+        scanRepository.markCurationComplete(scanUuid)
+
+        // Log audit with SELF_APPROVE action
+        logAuditEvent(
+            entityType = "SESSION",
+            entityId = session.id,
+            action = "SELF_APPROVE",
+            actorId = curatorId,
+            actorRole = "CURATOR",
+            previousState = null,
+            newState = buildJsonObject {
+                put("finalized", true)
+                put("curatorId", curatorId)
+                put("comment", comment ?: "")
+            }.toString(),
+            changeSummary = "Session finalized by $curatorId (approval not required)"
+        )
+
+        logger.info { "Session $scanId finalized by $curatorId (approval not required)" }
+
+        return getApprovalStatus(scanId)
+    }
+
+    /**
      * Get approval status for a session
      */
     fun getApprovalStatus(scanId: String): ApprovalStatusResponse {
@@ -1261,7 +1311,8 @@ class CurationService(
             submittedBy = session.submittedBy,
             submittedAt = session.submittedAt,
             approval = approvalRecord?.toResponse(),
-            readiness = readiness
+            readiness = readiness,
+            requireApproval = settingsRepository?.isApprovalRequired() ?: true
         )
     }
 

@@ -688,7 +688,14 @@ export const api = {
 
   // Scan Import (Phase B)
   importScan: (projectId: string, result: object) =>
-    apiClient.post<Scan>('/scans/import', { projectId, result })
+    apiClient.post<Scan>('/scans/import', { projectId, result }),
+
+  // Settings
+  getSettings: () =>
+    apiClient.get<{ requireApproval: boolean }>('/settings'),
+
+  updateSettings: (data: { requireApproval?: boolean }) =>
+    apiClient.put<{ requireApproval: boolean }>('/settings', data)
 }
 
 export default apiClient

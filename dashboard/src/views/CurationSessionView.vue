@@ -198,15 +198,29 @@ const filteredItems = computed(() => {
   return result
 })
 
+// Settings: whether the 4-eyes approval workflow is required
+const requireApproval = computed(() => approvalStatus.value?.requireApproval ?? true)
+
 // EU Compliance: Check if session can be submitted for approval
 const canSubmitForApproval = computed(() => {
+  if (!requireApproval.value) return false  // hide when approval not required
   if (!approvalStatus.value?.readiness) return false
   return approvalStatus.value.readiness.isReady && !approvalStatus.value.isSubmittedForApproval
 })
 
 // EU Compliance: Check if current user can approve (must be different from submitter)
 const isSubmittedForApproval = computed(() => {
+  if (!requireApproval.value) return false
   return approvalStatus.value?.isSubmittedForApproval || false
+})
+
+// Check if session can be finalized directly (approval not required)
+const canFinalize = computed(() => {
+  if (requireApproval.value) return false
+  if (!session.value) return false
+  if (session.value.status === 'APPROVED') return false
+  // Only require all items to be decided (no pending), not EU justifications/OR licenses
+  return session.value.statistics.pending === 0
 })
 
 // EU Compliance: Check if item requires justification
@@ -576,8 +590,8 @@ async function fetchEUComplianceData() {
   if (!session.value) return
 
   try {
-    // Fetch approval status
-    const approvalRes = await fetch(`/api/v1/scans/${session.value.scanId}/curation/approval/readiness`)
+    // Fetch approval status (includes requireApproval setting)
+    const approvalRes = await fetch(`/api/v1/scans/${session.value.scanId}/curation/approval`)
     if (approvalRes.ok) {
       approvalStatus.value = await approvalRes.json()
     }
@@ -702,6 +716,35 @@ async function submitForApproval() {
   } catch (e: any) {
     console.error('Failed to submit for approval', e)
     toast.add({ severity: 'error', summary: 'Error', detail: e.message || 'Failed to submit for approval', life: 3000 })
+  } finally {
+    submitting.value = false
+  }
+}
+
+// Finalize session directly (when approval is disabled)
+async function finalizeSession() {
+  if (!session.value) return
+
+  submitting.value = true
+  try {
+    const res = await fetch(`/api/v1/scans/${session.value.scanId}/curation/finalize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Curator-Id': 'curator' },
+      body: JSON.stringify({ comment: 'Finalized by curator' })
+    })
+
+    if (!res.ok) {
+      const error = await res.json()
+      throw new Error(error.error || 'Failed to finalize')
+    }
+
+    await fetchData()
+    await fetchEUComplianceData()
+
+    toast.add({ severity: 'success', summary: 'Finalized', detail: 'Session finalized successfully', life: 3000 })
+  } catch (e: any) {
+    console.error('Failed to finalize session', e)
+    toast.add({ severity: 'error', summary: 'Error', detail: e.message || 'Failed to finalize', life: 3000 })
   } finally {
     submitting.value = false
   }
@@ -1085,6 +1128,14 @@ onMounted(initializeData)
             @click="resolveAllWithAi"
           />
           <Button
+            v-if="canFinalize"
+            label="Finalize"
+            icon="pi pi-check-circle"
+            severity="success"
+            :loading="submitting"
+            @click="finalizeSession"
+          />
+          <Button
             v-if="canSubmitForApproval"
             label="Submit for Approval"
             icon="pi pi-send"
@@ -1193,7 +1244,7 @@ onMounted(initializeData)
       </Message>
 
       <!-- EU Compliance: Approval Workflow Status -->
-      <div v-if="isSubmittedForApproval && session.status !== 'APPROVED'" class="pending-approval-banner">
+      <div v-if="requireApproval && isSubmittedForApproval && session.status !== 'APPROVED'" class="pending-approval-banner">
         <i class="pi pi-clock"></i>
         <div>
           <strong>Awaiting Approval</strong>
@@ -1220,7 +1271,7 @@ onMounted(initializeData)
       </div>
 
       <!-- EU Compliance: Readiness Info -->
-      <div v-if="approvalStatus?.readiness && !isSubmittedForApproval && session.status !== 'APPROVED'" class="readiness-banner">
+      <div v-if="requireApproval && approvalStatus?.readiness && !isSubmittedForApproval && session.status !== 'APPROVED'" class="readiness-banner">
         <div class="readiness-header">
           <h4>Approval Readiness</h4>
           <Badge

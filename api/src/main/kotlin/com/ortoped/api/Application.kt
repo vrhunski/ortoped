@@ -93,6 +93,7 @@ fun Application.module() {
     val curatedScanRepository = CuratedScanRepository()
     val curationTemplateRepository = CurationTemplateRepository()
     val ortCacheRepository = OrtCacheRepository()
+    val settingsRepository = SettingsRepository()
 
     // Initialize graph service first (needed by other services)
     val licenseGraphService = LicenseGraphService()
@@ -118,7 +119,8 @@ fun Application.module() {
         curatedScanRepository = curatedScanRepository,
         scanRepository = scanRepository,
         licenseGraphService = licenseGraphService,
-        licenseResolver = cachingLicenseResolver
+        licenseResolver = cachingLicenseResolver,
+        settingsRepository = settingsRepository
     )
     val templateService = TemplateService(
         templateRepository = curationTemplateRepository,
@@ -145,7 +147,8 @@ fun Application.module() {
         templateService = templateService,
         reportService = reportService,
         licenseGraphService = licenseGraphService,
-        ortCacheRepository = ortCacheRepository
+        ortCacheRepository = ortCacheRepository,
+        settingsRepository = settingsRepository
     )
 
     // Start background jobs
