@@ -7,10 +7,18 @@ on:
     branches: [main]
 
 jobs:
-  # Build and test job
   build:
     name: Build and Test
     runs-on: ubuntu-latest
+    services:
+      docker:
+        image: docker:dind
+        options: >-
+          --privileged
+          --health-cmd "docker info"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout code
@@ -34,6 +42,8 @@ jobs:
 
       - name: Run tests
         run: ./gradlew test
+        env:
+          DOCKER_HOST: tcp://docker:2375
 
       - name: Upload test results
         if: always()
