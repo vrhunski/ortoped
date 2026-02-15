@@ -252,3 +252,160 @@ Policy rules are defined in YAML. See `docs/POLICY-EVALUATION.md` for schema.
 ### Database Schema Changes
 1. Create migration in `api/db/migration/` with format `V{N}__{description}.sql`
 2. Flyway auto-applies on startup
+
+## ✍️ Coding Conventions
+
+### General
+- Use **Markdown** for all documentation
+- Use **MDC format** for Cursor rules (YAML frontmatter + Markdown body)
+- Prefer **explicit over implicit** — document assumptions
+- Keep files **focused and small** — split if >300 lines
+
+### MDC File Format (.mdc)
+```markdown
+---
+description: "USE WHEN: [trigger condition]"
+globs: ["**/*.ts", "**/*.tsx"]
+alwaysApply: false
+priority: 50
+---
+
+# Rule Title
+
+## Section
+- Rule content here
+```
+
+### Markdown Style
+- Use ATX headers (`#`, `##`, `###`)
+- Use tables for structured comparisons
+- Use code blocks with language hints
+- Use emoji sparingly for visual hierarchy (🔴, ✅, ⚠️)
+
+---
+
+## 🔄 Work Protocol
+
+When making changes to this repository:
+
+### 1. Plan First
+- Read relevant existing files before editing
+- Understand the rule hierarchy (MASTER_RULES → global_rules → stack-specific)
+- Check if similar rules exist elsewhere
+
+### 2. Minimal Diff
+- Change only what's necessary
+- Don't reformat or restructure unrelated sections
+- Preserve existing patterns and conventions
+
+### 3. Consistency
+- Match the style of surrounding content
+- Use the same terminology as existing rules
+- Follow the priority numbering scheme for .mdc files
+
+### 4. Verify
+- Check that Markdown renders correctly
+- Ensure no broken links
+- Validate YAML frontmatter syntax in .mdc files
+
+### 5. Document
+- Update CHANGELOG.md for significant changes
+- Add comments explaining non-obvious decisions
+
+---
+
+## 🔐 Security Rules (Non-Negotiable)
+
+- **Never** add real API keys, tokens, or secrets
+- **Always** use `EXAMPLE_` prefix for placeholder values
+- **Never** log PII or sensitive data
+- **Always** validate inputs in code examples
+
+---
+
+## 📚 Key References
+
+| Document                    | Purpose |
+|-----------------------------|---------|
+| `docs/core/MASTER_RULES.md` | Golden Rule, Three-Phase Pattern, Assumptions Ledger |
+| `docs/core/global_rules.md` | General rules that apply to all paths |
+
+---
+
+## 🎸 Vibe Coding Mode
+
+This repository embraces **Vibe Coding** principles:
+
+- **Speed over perfection** in early iterations
+- **Reroll** instead of debugging when stuck >10 minutes
+- **Commit checkpoints** frequently
+- **Product thinking** — focus on what we're building, not just how
+
+**Guardrails still apply:**
+- Tests required before merge
+- Security rules always on
+- Tech debt must be documented
+
+---
+
+## 🤝 How to Collaborate with Me (Claude)
+
+### Do
+- Give me success criteria, not step-by-step instructions
+- Share context from related files
+- Ask me to explain trade-offs
+- Challenge my assumptions
+
+### Don't
+- Assume I know the full project state
+- Skip verification steps
+- Accept my first answer without review
+
+### When I'm Uncertain
+I will:
+1. State my assumptions explicitly
+2. Ask clarifying questions (max 3)
+3. Mark critical assumptions with 🔴
+4. Stop and ask before making risky changes
+
+---
+
+## 📜 Modular Rules
+
+This repository uses `.claude/rules/*.md` for path-specific instructions:
+
+| Rule File | Applies To |
+|-----------|------------|
+| `security.md` | `**/auth/**, **/security/**` |
+| `frontend.md` | `**/*.tsx, **/*.jsx` |
+| `backend.md` | `**/api/**, **/server/**` |
+| `database.md` | `**/prisma/**, **/*.sql` |
+| `testing.md` | `**/*.test.*, **/*.spec.*` |
+
+Rules use YAML frontmatter with `paths` field for conditional loading.
+
+---
+
+## 🔧 Recommended Permissions
+
+Add to `.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(pnpm *)",
+      "Bash(git diff *)",
+      "Bash(git status)",
+      "Bash(git log *)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(git push --force*)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)"
+    ]
+  }
+}

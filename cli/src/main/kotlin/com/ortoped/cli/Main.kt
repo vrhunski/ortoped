@@ -2,11 +2,14 @@ package com.ortoped.cli
 
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.CliktError
+import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.options.*
 import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.file
 import com.ortoped.core.cache.LocalFileCache
+import com.ortoped.core.curation.CurationLoader
+import com.ortoped.core.curation.OrtCuration
 import com.ortoped.core.policy.PolicyYamlLoader
 import com.ortoped.core.report.ReportGenerator
 import com.ortoped.core.scanner.ScanOrchestrator
@@ -276,6 +279,12 @@ class ScanCommand : CliktCommand(
         help = "Automatically resolve licenses using AI (implies --enable-ai)"
     ).flag(default = false)
 
+    private val confidenceThreshold by option(
+        "--confidence-threshold",
+        help = "Minimum AI confidence for auto-accept (HIGH, MEDIUM, LOW; default: HIGH)"
+    ).choice("HIGH", "MEDIUM", "LOW")
+        .default("HIGH")
+
     private val parallelAi by option(
         "--parallel-ai",
         help = "Run AI license resolution in parallel (faster)"
@@ -474,6 +483,11 @@ class ScanCommand : CliktCommand(
                 reportGenerator.generateConsoleReport(scanResult)
             }
 
+            // Auto-accept AI suggestions above confidence threshold
+            if (autoResolve) {
+                autoAcceptSuggestions(scanResult, projectDir)
+            }
+
             // Inline SBOM generation
             if (sbomFormat != null) {
                 generateInlineSbom(scanResult)
@@ -511,15 +525,68 @@ class ScanCommand : CliktCommand(
             }
 
         } catch (e: CliktError) {
-            throw e
+            throw e  // Policy failures → exit 1
         } catch (e: Exception) {
             logger.error(e) { "Scan failed" }
             echo("Error: ${e.message}", err = true)
-            throw e
+            throw ProgramResult(2)  // Scan errors → exit 2
         } finally {
             // Cleanup cloned repository if needed
             cleanupFunction?.invoke()
         }
+    }
+
+    private fun autoAcceptSuggestions(scanResult: com.ortoped.core.model.ScanResult, projectDir: File) {
+        val confidenceOrder = mapOf("HIGH" to 3, "MEDIUM" to 2, "LOW" to 1)
+        val thresholdValue = confidenceOrder[confidenceThreshold] ?: 3
+
+        val withSuggestions = scanResult.dependencies.filter { it.aiSuggestion != null }
+        if (withSuggestions.isEmpty()) return
+
+        val accepted = withSuggestions.filter { dep ->
+            val suggestion = dep.aiSuggestion ?: return@filter false
+            val suggestionValue = confidenceOrder[suggestion.confidence] ?: 0
+            suggestionValue >= thresholdValue
+        }
+        val flagged = withSuggestions.size - accepted.size
+
+        if (accepted.isNotEmpty()) {
+            // Load existing curations, append new ones, write back
+            val ortopedDir = File(projectDir, ".ortoped")
+            ortopedDir.mkdirs()
+            val curationsFile = File(ortopedDir, CurationLoader.ORT_CURATIONS_FILENAME)
+
+            val loader = CurationLoader()
+            val existing = loader.loadOrtCurations(curationsFile)
+            val existingIds = existing.map { it.id }.toSet()
+
+            val newCurations = accepted
+                .filter { it.id !in existingIds }
+                .mapNotNull { dep ->
+                    val suggestion = dep.aiSuggestion ?: return@mapNotNull null
+                    OrtCuration(
+                        id = dep.id,
+                        concludedLicense = suggestion.suggestedLicense,
+                        comment = "Auto-accepted by AI (confidence: ${suggestion.confidence})"
+                    )
+                }
+
+            if (newCurations.isNotEmpty()) {
+                val allCurations = existing + newCurations
+                val yamlBuilder = StringBuilder("curations:\n")
+                for (curation in allCurations) {
+                    yamlBuilder.append("- id: \"${curation.id}\"\n")
+                    yamlBuilder.append("  concluded_license: \"${curation.concludedLicense}\"\n")
+                    if (curation.comment != null) {
+                        yamlBuilder.append("  comment: \"${curation.comment}\"\n")
+                    }
+                }
+                curationsFile.writeText(yamlBuilder.toString())
+            }
+        }
+
+        echo()
+        echo("Auto-accepted ${accepted.size} suggestion(s) (threshold: $confidenceThreshold), $flagged flagged for manual review")
     }
 
     private fun generateInlineSbom(scanResult: com.ortoped.core.model.ScanResult) {
