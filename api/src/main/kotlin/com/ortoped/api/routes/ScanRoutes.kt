@@ -2,6 +2,7 @@ package com.ortoped.api.routes
 
 import com.ortoped.api.model.AnalyzerConfigResponse
 import com.ortoped.api.model.GenerateSbomRequest
+import com.ortoped.api.model.ImportScanRequest
 import com.ortoped.api.model.SbomResponse
 import com.ortoped.api.model.TriggerScanRequest
 import com.ortoped.api.service.ScanService
@@ -43,6 +44,13 @@ fun Route.scanRoutes(scanService: ScanService) {
                 disabledPackageManagers = request.disabledPackageManagers
             )
             call.respond(HttpStatusCode.OK, response)
+        }
+
+        // Import a CLI scan result
+        post("/import") {
+            val request = call.receive<ImportScanRequest>()
+            val response = scanService.importScanResult(request.result, request.projectId, request.projectName)
+            call.respond(HttpStatusCode.Created, response)
         }
 
         // Trigger a new scan (rate limited)

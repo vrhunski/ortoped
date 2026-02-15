@@ -1,13 +1,16 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import DashboardView from '@/views/DashboardView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/',
+      redirect: '/scans'
+    },
+    {
+      path: '/dashboard',
       name: 'dashboard',
-      component: DashboardView
+      component: () => import('@/views/DashboardView.vue')
     },
     {
       path: '/projects',
@@ -58,6 +61,11 @@ const router = createRouter({
       path: '/curation-templates',
       name: 'curation-templates',
       component: () => import('@/views/CurationTemplatesView.vue')
+    },
+    {
+      path: '/compliance',
+      name: 'compliance',
+      component: () => import('@/views/ComplianceView.vue')
     }
   ]
 })

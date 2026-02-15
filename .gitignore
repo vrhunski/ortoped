@@ -39,3 +39,4 @@ local.properties
 # Build outputs
 dist/
 *.jar.env
+.aider*

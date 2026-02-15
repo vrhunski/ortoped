@@ -2,6 +2,10 @@ package com.ortoped.core.scanner
 
 import com.ortoped.core.ai.CachingLicenseResolver
 import com.ortoped.core.ai.LicenseResolutionCache
+import com.ortoped.core.cache.LocalFileCache
+import com.ortoped.core.cache.LockfileHasher
+import com.ortoped.core.curation.CurationLoader
+import com.ortoped.core.curation.CurationSet
 import com.ortoped.core.model.Dependency
 import com.ortoped.core.model.ScanResult
 import com.ortoped.core.model.ScanSummary
@@ -19,7 +23,10 @@ class ScanOrchestrator(
     private val scanner: SimpleScannerWrapper = SimpleScannerWrapper(),
     private val licenseResolver: CachingLicenseResolver = CachingLicenseResolver(),
     private val spdxClient: SpdxLicenseClient = SpdxLicenseClient(),
-    private val scannerConfig: ScannerConfig = ScannerConfig()
+    private val scannerConfig: ScannerConfig = ScannerConfig(),
+    private val curationLoader: CurationLoader = CurationLoader(),
+    private val lockfileHasher: LockfileHasher = LockfileHasher(),
+    private val localCache: LocalFileCache? = null
 ) {
     /**
      * Secondary constructor for backwards compatibility with existing code
@@ -53,14 +60,16 @@ class ScanOrchestrator(
 
     suspend fun scanWithAiEnhancement(
         projectDir: File,
-        enableAiResolution: Boolean = true,
+        enableAiResolution: Boolean = false,
         enableSpdx: Boolean = false,
         enableSourceScan: Boolean = false,
         parallelAiCalls: Boolean = true,
         demoMode: Boolean = false,
         disabledPackageManagers: List<String> = emptyList(),
         allowDynamicVersions: Boolean = true,
-        skipExcluded: Boolean = true
+        skipExcluded: Boolean = true,
+        curationsFile: File? = null,
+        useFastPath: Boolean = true
     ): ScanResult {
         logger.info { "Starting orchestrated scan for: ${projectDir.absolutePath}" }
         logger.info { "Source code scanning: $enableSourceScan" }
@@ -68,6 +77,37 @@ class ScanOrchestrator(
         logger.info { "SPDX enhancement: $enableSpdx" }
         logger.info { "Allow dynamic versions: $allowDynamicVersions" }
         logger.info { "Skip excluded: $skipExcluded" }
+        logger.info { "Fast path (cache): $useFastPath" }
+
+        // Step 0: Load curations
+        val curationSet = if (curationsFile != null) {
+            logger.info { "Loading curations from explicit file: ${curationsFile.absolutePath}" }
+            val ortCurations = curationLoader.loadOrtCurations(curationsFile)
+            CurationSet(ortCurations = ortCurations)
+        } else {
+            curationLoader.loadFromProject(projectDir)
+        }
+        val curationMap = curationSet.buildLookupMap()
+        if (curationMap.isNotEmpty()) {
+            logger.info { "Loaded ${curationMap.size} curation(s) for license resolution" }
+        }
+
+        // Step 0b: Fast path — check lockfile cache
+        if (useFastPath && localCache != null && !demoMode) {
+            val lockfileHash = lockfileHasher.hashLockfiles(projectDir)
+            if (lockfileHash != null) {
+                val cached = localCache.loadCachedScan(lockfileHash)
+                if (cached != null) {
+                    logger.info { "Fast path: using cached scan result (hash=$lockfileHash)" }
+                    return if (curationMap.isNotEmpty()) {
+                        applyCurations(cached, curationMap)
+                    } else {
+                        cached
+                    }
+                }
+                logger.info { "Fast path: no cached scan for hash=$lockfileHash" }
+            }
+        }
 
         // Step 1/4: Run analyzer scan
         logger.info { "Step 1/4: Running analyzer..." }
@@ -87,39 +127,40 @@ class ScanOrchestrator(
             logger.info { "Source scan complete. Scanned ${scanResult.packagesScanned} packages" }
         }
 
-        // Step 3: AI enhancement for unresolved licenses
-        logger.info { "Total dependencies found: ${scanResult.dependencies.size}" }
-        logger.info { "Resolved licenses: ${scanResult.summary.resolvedLicenses}" }
-        logger.info { "Unresolved licenses: ${scanResult.unresolvedLicenses.size}" }
+        // Step 2.5: Apply curations
+        val curatedResult = if (curationMap.isNotEmpty()) {
+            logger.info { "Applying ${curationMap.size} curation(s) to scan result..." }
+            applyCurations(scanResult, curationMap)
+        } else {
+            scanResult
+        }
 
-        if (scanResult.unresolvedLicenses.isNotEmpty()) {
+        // Step 3: AI enhancement for unresolved licenses
+        logger.info { "Total dependencies found: ${curatedResult.dependencies.size}" }
+        logger.info { "Resolved licenses: ${curatedResult.summary.resolvedLicenses}" }
+        logger.info { "Unresolved licenses: ${curatedResult.unresolvedLicenses.size}" }
+
+        if (curatedResult.unresolvedLicenses.isNotEmpty()) {
             logger.info { "Unresolved dependencies:" }
-            scanResult.unresolvedLicenses.forEach { unresolved ->
+            curatedResult.unresolvedLicenses.forEach { unresolved ->
                 logger.info { "  - ${unresolved.dependencyName} (${unresolved.dependencyId}): ${unresolved.reason}" }
             }
         }
-/*
 
-        if (!enableAiResolution) {
-            logger.info { "AI resolution is disabled. Returning scan result without AI enhancement." }
-            return scanResult
-        }
-*/
-
-        logger.info { "Step 3/4: ${if (enableAiResolution) "AI-enhancing ${scanResult.unresolvedLicenses.size} unresolved licenses..." else "Skipping AI enhancement"}" }
-        val aiEnhancedDependencies =  if (enableAiResolution && scanResult.unresolvedLicenses.isNotEmpty()) {
+        logger.info { "Step 3/4: ${if (enableAiResolution) "AI-enhancing ${curatedResult.unresolvedLicenses.size} unresolved licenses..." else "Skipping AI enhancement"}" }
+        val aiEnhancedDependencies = if (enableAiResolution && curatedResult.unresolvedLicenses.isNotEmpty()) {
             enhanceWithAi(
-                scanResult.dependencies,
-                scanResult.unresolvedLicenses,
+                curatedResult.dependencies,
+                curatedResult.unresolvedLicenses,
                 parallelAiCalls
             )
-        } else{
+        } else {
             if (enableAiResolution) {
                 logger.info { "AI resolution is enabled but no unresolved licenses to enhance." }
             } else {
                 logger.info { "AI resolution is disabled. Skipping AI enhancement." }
             }
-            scanResult.dependencies
+            curatedResult.dependencies
         }
 
         // Calculate new summary
@@ -129,7 +170,7 @@ class ScanOrchestrator(
             }
         } else 0
 
-        val updatedSummary = scanResult.summary.copy(
+        val updatedSummary = curatedResult.summary.copy(
             aiResolvedLicenses = aiResolvedCount
         )
 
@@ -154,11 +195,61 @@ class ScanOrchestrator(
 
         logger.info { "SPDX enhancement complete. Validated: $spdxResolvedCount licenses" }
 
-        return scanResult.copy(
+        val finalResult = curatedResult.copy(
             dependencies = spdxEnhancedDependencies,
             summary = finalSummary,
             aiEnhanced = enableAiResolution,
             spdxEnhanced = enableSpdx
+        )
+
+        // Cache the result for fast path
+        if (useFastPath && localCache != null && !demoMode) {
+            val lockfileHash = lockfileHasher.hashLockfiles(projectDir)
+            if (lockfileHash != null) {
+                localCache.cacheScan(lockfileHash, finalResult)
+            }
+        }
+
+        return finalResult
+    }
+
+    /**
+     * Apply curations to a scan result. For each dependency whose ID matches a curation,
+     * set the concludedLicense and mark isResolved = true.
+     */
+    private fun applyCurations(scanResult: ScanResult, curationMap: Map<String, String>): ScanResult {
+        var curatedCount = 0
+        val updatedDependencies = scanResult.dependencies.map { dep ->
+            val curatedLicense = curationMap[dep.id]
+            if (curatedLicense != null && !dep.isResolved) {
+                curatedCount++
+                dep.copy(
+                    concludedLicense = curatedLicense,
+                    isResolved = true
+                )
+            } else {
+                dep
+            }
+        }
+
+        if (curatedCount > 0) {
+            logger.info { "Applied curations to $curatedCount dependency(ies)" }
+        }
+
+        // Update unresolved licenses list — remove curated ones
+        val curatedIds = curationMap.keys
+        val remainingUnresolved = scanResult.unresolvedLicenses.filter { it.dependencyId !in curatedIds }
+
+        // Update summary counts
+        val updatedSummary = scanResult.summary.copy(
+            resolvedLicenses = scanResult.summary.resolvedLicenses + curatedCount,
+            unresolvedLicenses = remainingUnresolved.size
+        )
+
+        return scanResult.copy(
+            dependencies = updatedDependencies,
+            unresolvedLicenses = remainingUnresolved,
+            summary = updatedSummary
         )
     }
 

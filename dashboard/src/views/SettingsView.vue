@@ -7,6 +7,10 @@ const loading = ref(true)
 const newKeyName = ref('')
 const newKey = ref<string | null>(null)
 
+// Curation workflow settings
+const requireApproval = ref(false)
+const settingsLoading = ref(false)
+
 async function fetchApiKeys() {
   loading.value = true
   try {
@@ -45,7 +49,31 @@ function copyToClipboard(text: string) {
   navigator.clipboard.writeText(text)
 }
 
-onMounted(fetchApiKeys)
+async function fetchSettings() {
+  settingsLoading.value = true
+  try {
+    const response = await api.getSettings()
+    requireApproval.value = response.data.requireApproval
+  } catch (e) {
+    console.error('Failed to fetch settings', e)
+  } finally {
+    settingsLoading.value = false
+  }
+}
+
+async function updateApprovalSetting(value: boolean) {
+  try {
+    const response = await api.updateSettings({ requireApproval: value })
+    requireApproval.value = response.data.requireApproval
+  } catch (e) {
+    console.error('Failed to update settings', e)
+  }
+}
+
+onMounted(() => {
+  fetchApiKeys()
+  fetchSettings()
+})
 </script>
 
 <template>
@@ -120,6 +148,33 @@ onMounted(fetchApiKeys)
         <p>No API keys yet. Create one to get started.</p>
       </div>
     </div>
+
+    <div class="section" style="margin-top: 1.5rem;">
+      <h2>Curation Workflow</h2>
+      <p class="section-description">Configure how curation sessions are finalized.</p>
+
+      <div v-if="settingsLoading" class="loading">
+        <i class="pi pi-spin pi-spinner"></i> Loading...
+      </div>
+
+      <div v-else class="setting-row">
+        <div class="setting-info">
+          <strong>Require separate approver (4-eyes principle)</strong>
+          <p class="setting-description">
+            When enabled, a different person must review and approve curation sessions before they are finalized.
+            Required for EU compliance.
+          </p>
+        </div>
+        <label class="toggle-switch">
+          <input
+            type="checkbox"
+            :checked="requireApproval"
+            @change="updateApprovalSetting(($event.target as HTMLInputElement).checked)"
+          />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -156,4 +211,16 @@ onMounted(fetchApiKeys)
 .data-table code { background: #f1f5f9; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-family: monospace; }
 
 .loading, .empty-state { text-align: center; padding: 2rem; color: #64748b; }
+
+.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 0; }
+.setting-info { flex: 1; }
+.setting-info strong { color: #1e293b; }
+.setting-description { color: #64748b; font-size: 0.875rem; margin: 0.25rem 0 0; }
+
+.toggle-switch { position: relative; display: inline-block; width: 48px; height: 26px; flex-shrink: 0; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #cbd5e1; border-radius: 26px; transition: 0.3s; }
+.toggle-slider:before { content: ""; position: absolute; height: 20px; width: 20px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.3s; }
+.toggle-switch input:checked + .toggle-slider { background: #3b82f6; }
+.toggle-switch input:checked + .toggle-slider:before { transform: translateX(22px); }
 </style>

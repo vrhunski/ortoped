@@ -11,6 +11,7 @@ object Projects : UUIDTable("projects") {
     val repositoryUrl = varchar("repository_url", 500).nullable()
     val defaultBranch = varchar("default_branch", 100).default("main")
     val policyId = uuid("policy_id").references(Policies.id).nullable()
+    val distributionScope = varchar("distribution_scope", 50).default("BINARY")
     val createdAt = timestamp("created_at")
 }
 

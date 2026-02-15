@@ -371,6 +371,59 @@ class ScanService(
         }
     }
 
+    /**
+     * Import a CLI scan result into the API database
+     */
+    fun importScanResult(result: ScanResult, projectId: String? = null, projectName: String? = null): ScanStatusResponse {
+        // Use projectId if provided, otherwise find/create by name
+        val projectUuid = if (!projectId.isNullOrBlank()) {
+            parseUUID(projectId)
+        } else if (!projectName.isNullOrBlank()) {
+            val existing = projectRepository.findByName(projectName)
+            if (existing != null) {
+                existing.id
+            } else {
+                projectRepository.create(name = projectName).id
+            }
+        } else null
+
+        // Create scan record as already completed
+        val scan = scanRepository.create(
+            projectId = projectUuid,
+            enableAi = result.aiEnhanced,
+            enableSpdx = result.spdxEnhanced
+        )
+
+        // Store the result
+        val resultJson = json.encodeToString(result)
+        val summaryJson = json.encodeToString(
+            mapOf(
+                "totalDependencies" to result.summary.totalDependencies,
+                "resolvedLicenses" to result.summary.resolvedLicenses,
+                "unresolvedLicenses" to result.summary.unresolvedLicenses,
+                "aiResolvedLicenses" to result.summary.aiResolvedLicenses,
+                "spdxResolvedLicenses" to result.summary.spdxResolvedLicenses
+            )
+        )
+
+        // Update status to complete and store result
+        scanRepository.updateStatus(
+            id = scan.id,
+            status = ScanStatus.COMPLETE,
+            startedAt = Clock.System.now(),
+            completedAt = Clock.System.now()
+        )
+
+        scanRepository.updateResult(
+            id = scan.id,
+            result = resultJson,
+            summary = summaryJson
+        )
+
+        val updatedScan = scanRepository.findById(scan.id)!!
+        return updatedScan.toStatusResponse()
+    }
+
     fun cancelScan(id: String) {
         val uuid = parseUUID(id)
         val job = activeJobs[uuid]

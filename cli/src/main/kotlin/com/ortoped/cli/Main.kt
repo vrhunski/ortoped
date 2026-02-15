@@ -2,9 +2,15 @@ package com.ortoped.cli
 
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.CliktError
+import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.options.*
+import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.file
+import com.ortoped.core.cache.LocalFileCache
+import com.ortoped.core.curation.CurationLoader
+import com.ortoped.core.curation.OrtCuration
+import com.ortoped.core.policy.PolicyYamlLoader
 import com.ortoped.core.report.ReportGenerator
 import com.ortoped.core.scanner.ScanOrchestrator
 import com.ortoped.core.scanner.ScannerConfig
@@ -13,9 +19,109 @@ import com.ortoped.core.scanner.SourceCodeScanner
 import com.ortoped.core.vcs.RemoteRepositoryHandler
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import java.io.File
+import java.net.ConnectException
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.net.http.HttpTimeoutException
+import java.net.URI
+import java.time.Duration
 
 private val logger = KotlinLogging.logger {}
+
+// ============================================================================
+// HTTP Client Helper (lightweight, no new dependencies)
+// ============================================================================
+
+private data class HttpResult(val statusCode: Int, val body: String)
+
+private object OrtopedHttpClient {
+    private val client = HttpClient.newBuilder()
+        .followRedirects(HttpClient.Redirect.NEVER)
+        .build()
+
+    fun post(url: String, body: String): HttpResult {
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .header("Content-Type", "application/json")
+            .timeout(Duration.ofSeconds(120))
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build()
+        return execute(request)
+    }
+
+    fun get(url: String): HttpResult {
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .header("Accept", "application/json")
+            .timeout(Duration.ofSeconds(30))
+            .GET()
+            .build()
+        return execute(request)
+    }
+
+    private fun execute(request: HttpRequest): HttpResult {
+        logger.debug { "HTTP ${request.method()} ${request.uri()}" }
+        try {
+            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+            logger.debug { "Response: ${response.statusCode()}" }
+            return HttpResult(response.statusCode(), response.body())
+        } catch (e: ConnectException) {
+            throw CliktError("Cannot connect to server at ${request.uri().host}:${request.uri().port}. Is the server running?")
+        } catch (e: HttpTimeoutException) {
+            throw CliktError("Request timed out connecting to ${request.uri()}")
+        }
+    }
+}
+
+// Minimal response models (CLI doesn't depend on :api module)
+
+@Serializable
+private data class ImportResponse(
+    val id: String,
+    val projectId: String? = null,
+    val status: String,
+    val createdAt: String? = null
+)
+
+@Serializable
+private data class CurationsYamlResponse(
+    val yaml: String,
+    val filename: String = "curations.yml"
+)
+
+@Serializable
+private data class NativeCurationExportResponse(
+    val version: String = "1.0",
+    val scanId: String = "",
+    val exportedAt: String = "",
+    val curations: List<NativeCurationExportItem> = emptyList()
+)
+
+@Serializable
+private data class NativeCurationExportItem(
+    val packageId: String = "",
+    val concludedLicense: String = "",
+    val status: String = ""
+)
+
+@Serializable
+private data class NoticeFileResponse(
+    val content: String,
+    val filename: String = "NOTICE"
+)
+
+@Serializable
+private data class ImportScanRequestCli(
+    val projectId: String? = null,
+    val projectName: String? = null,
+    val result: com.ortoped.core.model.ScanResult
+)
+
+private val cliJson = Json { ignoreUnknownKeys = true; prettyPrint = true }
 
 class OrtopedCli : CliktCommand(
     name = "ortoped",
@@ -27,6 +133,125 @@ class OrtopedCli : CliktCommand(
     """.trimIndent()
 ) {
     override fun run() = Unit
+}
+
+class InitCommand : CliktCommand(
+    name = "init",
+    help = "Initialize .ortoped/ directory with default configuration"
+) {
+    private val projectPath by option(
+        "-p", "--project",
+        help = "Project directory to initialize"
+    ).default(".")
+
+    override fun run() {
+        val projectDir = File(projectPath).canonicalFile
+        val ortopedDir = File(projectDir, ".ortoped")
+
+        echo("Initializing OrtoPed in: ${projectDir.absolutePath}")
+
+        // Create .ortoped/ directory
+        ortopedDir.mkdirs()
+
+        // Create curations.yml with commented examples
+        val curationsFile = File(ortopedDir, "curations.yml")
+        if (!curationsFile.exists()) {
+            curationsFile.writeText("""
+                |# OrtoPed Curations File (ORT-compatible format)
+                |# Add license curations for dependencies that ORT cannot auto-detect.
+                |#
+                |# Example:
+                |# curations:
+                |#   - id: "Maven:com.example:library:1.0.0"
+                |#     concluded_license: "MIT"
+                |#     comment: "Verified from LICENSE file in repository"
+                |#
+                |#   - id: "NPM:@scope:package:2.3.4"
+                |#     concluded_license: "Apache-2.0"
+                |#     comment: "Confirmed by maintainer"
+                |curations: []
+            """.trimMargin())
+            echo("  Created curations.yml")
+        } else {
+            echo("  curations.yml already exists, skipping")
+        }
+
+        // Create default policy.yml
+        val policyFile = File(ortopedDir, "policy.yml")
+        if (!policyFile.exists()) {
+            policyFile.writeText("""
+                |version: "1.0"
+                |name: "Default OrtoPed Policy"
+                |description: "Default policy that flags unknown licenses"
+                |categories:
+                |  permissive:
+                |    description: "Permissive open source licenses"
+                |    licenses:
+                |      - "MIT"
+                |      - "Apache-2.0"
+                |      - "BSD-2-Clause"
+                |      - "BSD-3-Clause"
+                |      - "ISC"
+                |      - "Unlicense"
+                |      - "0BSD"
+                |      - "CC0-1.0"
+                |  copyleft:
+                |    description: "Strong copyleft licenses"
+                |    licenses:
+                |      - "GPL-2.0-only"
+                |      - "GPL-2.0-or-later"
+                |      - "GPL-3.0-only"
+                |      - "GPL-3.0-or-later"
+                |      - "AGPL-3.0-only"
+                |      - "AGPL-3.0-or-later"
+                |  copyleft-limited:
+                |    description: "Weak copyleft licenses with limited scope"
+                |    licenses:
+                |      - "LGPL-2.0-only"
+                |      - "LGPL-2.1-only"
+                |      - "LGPL-3.0-only"
+                |      - "MPL-2.0"
+                |      - "EPL-1.0"
+                |      - "EPL-2.0"
+                |  unknown:
+                |    description: "Unknown or unresolved licenses"
+                |    licenses:
+                |      - "NOASSERTION"
+                |      - "Unknown"
+                |rules:
+                |  - id: "no-unknown"
+                |    name: "No Unknown Licenses"
+                |    description: "All dependencies must have identified licenses"
+                |    severity: "ERROR"
+                |    category: "unknown"
+                |    action: "DENY"
+                |    message: "Dependency {{dependency}} has unresolved license - manual review required"
+                |settings:
+                |  aiSuggestions:
+                |    acceptHighConfidence: true
+                |    treatMediumAsWarning: true
+                |    rejectLowConfidence: true
+                |  failOn:
+                |    errors: true
+                |    warnings: false
+            """.trimMargin())
+            echo("  Created policy.yml")
+        } else {
+            echo("  policy.yml already exists, skipping")
+        }
+
+        // Create cache directory
+        val cacheDir = File(ortopedDir, "cache")
+        cacheDir.mkdirs()
+        echo("  Created cache/ directory")
+
+        echo()
+        echo("OrtoPed initialized! Next steps:")
+        echo("  1. Run a scan:          ortoped scan -p .")
+        echo("  2. Add curations:       Edit .ortoped/curations.yml")
+        echo("  3. Customize policy:    Edit .ortoped/policy.yml")
+        echo("  4. Scan with AI:        ortoped scan -p . --auto-resolve")
+    }
 }
 
 class ScanCommand : CliktCommand(
@@ -47,7 +272,18 @@ class ScanCommand : CliktCommand(
     private val enableAi by option(
         "--enable-ai",
         help = "Enable AI-powered license resolution"
-    ).flag(default = true)
+    ).flag(default = false)
+
+    private val autoResolve by option(
+        "--auto-resolve",
+        help = "Automatically resolve licenses using AI (implies --enable-ai)"
+    ).flag(default = false)
+
+    private val confidenceThreshold by option(
+        "--confidence-threshold",
+        help = "Minimum AI confidence for auto-accept (HIGH, MEDIUM, LOW; default: HIGH)"
+    ).choice("HIGH", "MEDIUM", "LOW")
+        .default("HIGH")
 
     private val parallelAi by option(
         "--parallel-ai",
@@ -103,8 +339,38 @@ class ScanCommand : CliktCommand(
         help = "Keep cloned repository after scan (for debugging)"
     ).flag(default = false)
 
+    // Curation options
+    private val curationsFile by option(
+        "--curations",
+        help = "Explicit curations YAML file (overrides auto-detection)"
+    ).file()
+
+    private val noCurations by option(
+        "--no-curations",
+        help = "Skip auto-detection of .ortoped/curations.yml"
+    ).flag(default = false)
+
+    // Cache options
+    private val noCache by option(
+        "--no-cache",
+        help = "Skip fast-path lockfile cache"
+    ).flag(default = false)
+
+    // Inline SBOM generation
+    private val sbomFormat by option(
+        "--sbom",
+        help = "Generate SBOM inline: cyclonedx-json, cyclonedx-xml, spdx-json, spdx-tv"
+    )
+
+    private val sbomOutput by option(
+        "--sbom-output",
+        help = "Output file for inline SBOM (defaults based on format)"
+    ).file()
+
     override fun run() = runBlocking {
         logger.info { "Starting Ortoped scan..." }
+
+        val effectiveEnableAi = enableAi || autoResolve
 
         // Detect if projectPath is a remote URL or local directory
         val remoteHandler = RemoteRepositoryHandler()
@@ -152,7 +418,7 @@ class ScanCommand : CliktCommand(
             logger.info { "Demo Mode: $demoMode" }
             logger.info { "Project: ${projectDir.absolutePath}" }
             logger.info { "Output: ${outputFile.absolutePath}" }
-            logger.info { "AI Enhancement: $enableAi" }
+            logger.info { "AI Enhancement: $effectiveEnableAi" }
             logger.info { "Source Scanning: $enableSourceScan" }
 
             if (demoMode) {
@@ -177,22 +443,37 @@ class ScanCommand : CliktCommand(
                 SourceCodeScanner(scannerConfig)
             } else null
 
+            // Create local file cache unless disabled
+            val localCache = if (!noCache && !demoMode) {
+                LocalFileCache.fromProject(projectDir)
+            } else null
+
+            // Resolve curations file
+            val effectiveCurationsFile = when {
+                noCurations -> null
+                curationsFile != null -> curationsFile
+                else -> null // auto-detection handled by CurationLoader in orchestrator
+            }
+
             // Create orchestrator with scanner
             val scanner = SimpleScannerWrapper(sourceCodeScanner)
             val orchestrator = ScanOrchestrator(
                 scanner = scanner,
-                scannerConfig = scannerConfig
+                scannerConfig = scannerConfig,
+                localCache = localCache
             )
             val reportGenerator = ReportGenerator()
 
-            // Run scan with AI enhancement
+            // Run scan
             val scanResult = orchestrator.scanWithAiEnhancement(
                 projectDir = projectDir,
-                enableAiResolution = enableAi,
+                enableAiResolution = effectiveEnableAi,
                 enableSourceScan = enableSourceScan,
                 parallelAiCalls = parallelAi,
                 demoMode = demoMode,
-                disabledPackageManagers = disablePackageManagers
+                disabledPackageManagers = disablePackageManagers,
+                curationsFile = effectiveCurationsFile,
+                useFastPath = !noCache
             )
 
             // Generate reports
@@ -200,6 +481,39 @@ class ScanCommand : CliktCommand(
 
             if (consoleOutput) {
                 reportGenerator.generateConsoleReport(scanResult)
+            }
+
+            // Auto-accept AI suggestions above confidence threshold
+            if (autoResolve) {
+                autoAcceptSuggestions(scanResult, projectDir)
+            }
+
+            // Inline SBOM generation
+            if (sbomFormat != null) {
+                generateInlineSbom(scanResult)
+            }
+
+            // Auto-detect policy and evaluate
+            val policyFile = File(projectDir, ".ortoped/policy.yml")
+            if (policyFile.exists()) {
+                echo()
+                echo("Policy auto-evaluation (.ortoped/policy.yml):")
+                val loader = PolicyYamlLoader()
+                val config = loader.load(policyFile)
+                val evaluator = com.ortoped.core.policy.PolicyEvaluator(config)
+                val policyReport = evaluator.evaluate(scanResult)
+
+                if (policyReport.passed) {
+                    echo("  Policy: PASSED")
+                } else {
+                    echo("  Policy: FAILED (${policyReport.summary.errorCount} errors, ${policyReport.summary.warningCount} warnings)")
+                    val unresolvedCount = scanResult.unresolvedLicenses.size
+                    if (unresolvedCount > 0) {
+                        echo("  Unresolved dependencies: $unresolvedCount")
+                        echo("  Tip: Run with --auto-resolve or add curations to .ortoped/curations.yml")
+                    }
+                    throw CliktError("Policy evaluation failed with ${policyReport.summary.errorCount} error(s)")
+                }
             }
 
             logger.info { "Scan completed successfully!" }
@@ -210,14 +524,100 @@ class ScanCommand : CliktCommand(
                 echo("Repository kept at: ${projectDir.absolutePath}")
             }
 
+        } catch (e: CliktError) {
+            throw e  // Policy failures → exit 1
         } catch (e: Exception) {
             logger.error(e) { "Scan failed" }
             echo("Error: ${e.message}", err = true)
-            throw e
+            throw ProgramResult(2)  // Scan errors → exit 2
         } finally {
             // Cleanup cloned repository if needed
             cleanupFunction?.invoke()
         }
+    }
+
+    private fun autoAcceptSuggestions(scanResult: com.ortoped.core.model.ScanResult, projectDir: File) {
+        val confidenceOrder = mapOf("HIGH" to 3, "MEDIUM" to 2, "LOW" to 1)
+        val thresholdValue = confidenceOrder[confidenceThreshold] ?: 3
+
+        val withSuggestions = scanResult.dependencies.filter { it.aiSuggestion != null }
+        if (withSuggestions.isEmpty()) return
+
+        val accepted = withSuggestions.filter { dep ->
+            val suggestion = dep.aiSuggestion ?: return@filter false
+            val suggestionValue = confidenceOrder[suggestion.confidence] ?: 0
+            suggestionValue >= thresholdValue
+        }
+        val flagged = withSuggestions.size - accepted.size
+
+        if (accepted.isNotEmpty()) {
+            // Load existing curations, append new ones, write back
+            val ortopedDir = File(projectDir, ".ortoped")
+            ortopedDir.mkdirs()
+            val curationsFile = File(ortopedDir, CurationLoader.ORT_CURATIONS_FILENAME)
+
+            val loader = CurationLoader()
+            val existing = loader.loadOrtCurations(curationsFile)
+            val existingIds = existing.map { it.id }.toSet()
+
+            val newCurations = accepted
+                .filter { it.id !in existingIds }
+                .mapNotNull { dep ->
+                    val suggestion = dep.aiSuggestion ?: return@mapNotNull null
+                    OrtCuration(
+                        id = dep.id,
+                        concludedLicense = suggestion.suggestedLicense,
+                        comment = "Auto-accepted by AI (confidence: ${suggestion.confidence})"
+                    )
+                }
+
+            if (newCurations.isNotEmpty()) {
+                val allCurations = existing + newCurations
+                val yamlBuilder = StringBuilder("curations:\n")
+                for (curation in allCurations) {
+                    yamlBuilder.append("- id: \"${curation.id}\"\n")
+                    yamlBuilder.append("  concluded_license: \"${curation.concludedLicense}\"\n")
+                    if (curation.comment != null) {
+                        yamlBuilder.append("  comment: \"${curation.comment}\"\n")
+                    }
+                }
+                curationsFile.writeText(yamlBuilder.toString())
+            }
+        }
+
+        echo()
+        echo("Auto-accepted ${accepted.size} suggestion(s) (threshold: $confidenceThreshold), $flagged flagged for manual review")
+    }
+
+    private fun generateInlineSbom(scanResult: com.ortoped.core.model.ScanResult) {
+        val format = when (sbomFormat) {
+            "cyclonedx-json" -> com.ortoped.core.sbom.SbomFormat.CYCLONEDX_JSON
+            "cyclonedx-xml" -> com.ortoped.core.sbom.SbomFormat.CYCLONEDX_XML
+            "spdx-json" -> com.ortoped.core.sbom.SbomFormat.SPDX_JSON
+            "spdx-tv" -> com.ortoped.core.sbom.SbomFormat.SPDX_TV
+            else -> {
+                echo("Unknown SBOM format: $sbomFormat", err = true)
+                return
+            }
+        }
+
+        val defaultOutput = File("ortoped-sbom.${format.extension}")
+        val output = sbomOutput ?: defaultOutput
+
+        val config = com.ortoped.core.sbom.SbomConfig(format = format)
+        val generator: com.ortoped.core.sbom.SbomGenerator = when (format) {
+            com.ortoped.core.sbom.SbomFormat.CYCLONEDX_JSON,
+            com.ortoped.core.sbom.SbomFormat.CYCLONEDX_XML ->
+                com.ortoped.core.sbom.CycloneDxGenerator()
+            com.ortoped.core.sbom.SbomFormat.SPDX_JSON,
+            com.ortoped.core.sbom.SbomFormat.SPDX_TV ->
+                com.ortoped.core.sbom.SpdxGenerator()
+        }
+
+        echo()
+        echo("Generating ${format.displayName} SBOM...")
+        generator.generateToFile(scanResult, output, config)
+        echo("SBOM saved to: ${output.absolutePath}")
     }
 }
 
@@ -319,7 +719,7 @@ class PolicyCommand : CliktCommand(
 
     private val policyFile by option(
         "-p", "--policy",
-        help = "YAML policy file (uses default policy if not specified)"
+        help = "YAML policy file (auto-detects .ortoped/policy.yml if not specified)"
     ).file()
 
     private val outputFile by option(
@@ -356,9 +756,21 @@ class PolicyCommand : CliktCommand(
             val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
             val scanResult = json.decodeFromString<com.ortoped.core.model.ScanResult>(inputFile.readText())
 
+            // Resolve policy file: explicit > auto-detect > default
+            val effectivePolicyFile = policyFile ?: run {
+                val autoDetect = File(inputFile.parentFile ?: File("."), ".ortoped/policy.yml")
+                if (autoDetect.exists()) {
+                    logger.info { "Auto-detected policy file: ${autoDetect.absolutePath}" }
+                    echo("Using auto-detected policy: ${autoDetect.absolutePath}")
+                    autoDetect
+                } else {
+                    null
+                }
+            }
+
             // Load policy
             val loader = com.ortoped.core.policy.PolicyYamlLoader()
-            var config = loader.loadOrDefault(policyFile)
+            var config = loader.loadOrDefault(effectivePolicyFile)
 
             // Apply strict mode
             if (strict) {
@@ -435,8 +847,216 @@ class VersionCommand : CliktCommand(
     }
 }
 
+// ============================================================================
+// Curate Commands
+// ============================================================================
+
+class CurateCommand : CliktCommand(
+    name = "curate",
+    help = "Import scan results to dashboard and export curations"
+) {
+    override fun run() = Unit // group command, delegates to subcommands
+}
+
+class CurateImportCommand : CliktCommand(
+    name = "import",
+    help = "Import a scan report into the OrtoPed dashboard for curation"
+) {
+    private val inputFile by option(
+        "-i", "--input",
+        help = "Scan report JSON file (from ortoped scan)"
+    ).file(mustExist = true)
+        .required()
+
+    private val serverUrl by option(
+        "-s", "--server",
+        help = "OrtoPed server URL (default: ORTOPED_SERVER env or http://localhost:8080)"
+    ).default(System.getenv("ORTOPED_SERVER") ?: "http://localhost:8080")
+
+    private val projectName by option(
+        "--project-name",
+        help = "Project name (default: from scan result)"
+    )
+
+    private val projectId by option(
+        "--project-id",
+        help = "Existing project UUID to associate the scan with"
+    )
+
+    override fun run() {
+        echo("Importing scan report: ${inputFile.name}")
+
+        // Read and validate the JSON
+        val rawJson = inputFile.readText()
+        val scanResult = try {
+            cliJson.decodeFromString<com.ortoped.core.model.ScanResult>(rawJson)
+        } catch (e: Exception) {
+            throw CliktError("Invalid scan report: ${e.message}")
+        }
+
+        // Build the import request using proper JSON serialization
+        val effectiveProjectName = projectName ?: inputFile.nameWithoutExtension
+        val importRequest = ImportScanRequestCli(
+            projectId = projectId,
+            projectName = effectiveProjectName,
+            result = scanResult
+        )
+        val requestBody = cliJson.encodeToString(ImportScanRequestCli.serializer(), importRequest)
+
+        // POST to server
+        val url = "${serverUrl.trimEnd('/')}/api/v1/scans/import"
+        echo("Sending to: $url")
+
+        val result = OrtopedHttpClient.post(url, requestBody)
+
+        when {
+            result.statusCode == 201 -> {
+                val response = try {
+                    cliJson.decodeFromString<ImportResponse>(result.body)
+                } catch (e: Exception) {
+                    throw CliktError("Unexpected server response: ${result.body}")
+                }
+
+                echo()
+                echo("Scan imported successfully!")
+                echo("  Scan ID:  ${response.id}")
+                if (response.projectId != null) {
+                    echo("  Project:  ${response.projectId}")
+                }
+                echo("  Status:   ${response.status}")
+                echo()
+                echo("Next steps:")
+                echo("  1. Open the dashboard to curate licenses")
+                echo("  2. Export curations when done:")
+                echo("     ortoped curate export -s ${response.id}")
+            }
+            result.statusCode in 400..499 -> {
+                throw CliktError("Import rejected (HTTP ${result.statusCode}): ${result.body}")
+            }
+            result.statusCode in 500..599 -> {
+                throw CliktError("Server error (HTTP ${result.statusCode}). Try again later.")
+            }
+            else -> {
+                throw CliktError("Import failed (HTTP ${result.statusCode}): ${result.body}")
+            }
+        }
+    }
+}
+
+class CurateExportCommand : CliktCommand(
+    name = "export",
+    help = "Export curations from the dashboard as files for your project"
+) {
+    private val scanId by option(
+        "-s", "--scan-id",
+        help = "Scan ID to export curations from"
+    ).required().validate {
+        require(it.matches(Regex("[a-zA-Z0-9_-]+"))) {
+            "Scan ID must contain only alphanumeric characters, hyphens, and underscores"
+        }
+    }
+
+    private val serverUrl by option(
+        "--server",
+        help = "OrtoPed server URL (default: ORTOPED_SERVER env or http://localhost:8080)"
+    ).default(System.getenv("ORTOPED_SERVER") ?: "http://localhost:8080")
+
+    private val format by option(
+        "-f", "--format",
+        help = "Export format: yaml (default), native, notice, or all"
+    ).choice("yaml", "native", "notice", "all")
+        .default("yaml")
+
+    private val outputDir by option(
+        "-o", "--output-dir",
+        help = "Output directory (default: .ortoped)"
+    ).file()
+        .default(File(".ortoped"))
+
+    override fun run() {
+        val baseUrl = "${serverUrl.trimEnd('/')}/api/v1/scans/$scanId/curation/export"
+        val formats = if (format == "all") listOf("yaml", "native", "notice") else listOf(format)
+        val writtenFiles = mutableListOf<String>()
+        val canonicalOutputDir = outputDir.canonicalFile
+
+        canonicalOutputDir.mkdirs()
+
+        for (fmt in formats) {
+            try {
+                when (fmt) {
+                    "yaml" -> {
+                        val result = OrtopedHttpClient.get("$baseUrl/curations-yaml")
+                        if (result.statusCode != 200) {
+                            echo("Warning: Failed to export curations YAML (HTTP ${result.statusCode})", err = true)
+                            continue
+                        }
+                        val response = cliJson.decodeFromString<CurationsYamlResponse>(result.body)
+                        val file = safeOutputFile(canonicalOutputDir, response.filename)
+                        file.writeText(response.yaml)
+                        writtenFiles.add(file.path)
+                        echo("  Wrote ${file.path}")
+                    }
+                    "native" -> {
+                        val result = OrtopedHttpClient.get("$baseUrl/curations-native")
+                        if (result.statusCode != 200) {
+                            echo("Warning: Failed to export native curations (HTTP ${result.statusCode})", err = true)
+                            continue
+                        }
+                        // Pretty-print the native JSON
+                        val parsed = cliJson.parseToJsonElement(result.body)
+                        val prettyJson = cliJson.encodeToString(kotlinx.serialization.json.JsonElement.serializer(), parsed)
+                        val file = safeOutputFile(canonicalOutputDir, "curations.ortoped.json")
+                        file.writeText(prettyJson)
+                        writtenFiles.add(file.path)
+                        echo("  Wrote ${file.path}")
+                    }
+                    "notice" -> {
+                        val result = OrtopedHttpClient.get("$baseUrl/notice")
+                        if (result.statusCode != 200) {
+                            echo("Warning: Failed to export NOTICE file (HTTP ${result.statusCode})", err = true)
+                            continue
+                        }
+                        val response = cliJson.decodeFromString<NoticeFileResponse>(result.body)
+                        val file = safeOutputFile(canonicalOutputDir, response.filename)
+                        file.writeText(response.content)
+                        writtenFiles.add(file.path)
+                        echo("  Wrote ${file.path}")
+                    }
+                }
+            } catch (e: CliktError) {
+                throw e // Re-throw connection errors
+            } catch (e: Exception) {
+                echo("Warning: Failed to export $fmt format: ${e.message}", err = true)
+            }
+        }
+
+        echo()
+        if (writtenFiles.isEmpty()) {
+            throw CliktError("No files were exported. Check the scan ID and server connection.")
+        }
+
+        echo("Exported ${writtenFiles.size} file(s) to ${outputDir.path}/")
+        if (writtenFiles.any { it.endsWith("curations.yml") }) {
+            echo("Curations will be auto-applied on next scan: ortoped scan -p .")
+        }
+    }
+
+    private fun safeOutputFile(baseDir: File, filename: String): File {
+        val sanitized = filename.replace("..", "").replace("/", "").replace("\\", "")
+        val file = File(baseDir, sanitized).canonicalFile
+        require(file.startsWith(baseDir)) {
+            "Filename '$filename' escapes output directory"
+        }
+        return file
+    }
+}
+
 fun main(args: Array<String>) {
     OrtopedCli()
-        .subcommands(ScanCommand(), SbomCommand(), PolicyCommand(), VersionCommand())
+        .subcommands(
+            InitCommand(), ScanCommand(), SbomCommand(), PolicyCommand(),
+            CurateCommand().subcommands(CurateImportCommand(), CurateExportCommand()),
+            VersionCommand()
+        )
         .main(args)
 }

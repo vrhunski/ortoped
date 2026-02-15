@@ -5,6 +5,7 @@ import com.ortoped.api.plugins.BadRequestException
 import com.ortoped.api.plugins.InternalException
 import com.ortoped.api.plugins.NotFoundException
 import com.ortoped.api.repository.*
+import com.ortoped.core.ai.CachingLicenseResolver
 import com.ortoped.core.model.Dependency
 import com.ortoped.core.model.ScanResult
 import com.ortoped.core.policy.explanation.ExplanationGenerator
@@ -27,7 +28,9 @@ class CurationService(
     private val curationSessionRepository: CurationSessionRepository,
     private val curatedScanRepository: CuratedScanRepository,
     private val scanRepository: ScanRepository,
-    private val licenseGraphService: LicenseGraphService? = null
+    private val licenseGraphService: LicenseGraphService? = null,
+    private val licenseResolver: CachingLicenseResolver? = null,
+    private val settingsRepository: SettingsRepository? = null
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -453,10 +456,14 @@ class CurationService(
         val curation = curationRepository.findByDependencyId(session.id, dependencyId)
             ?: throw NotFoundException("Curation item not found: $dependencyId")
 
-        // Get the license to validate
+        // Get the license to validate - fall back through all available license sources
+        val declaredFirst = curation.declaredLicenses?.let {
+            try { json.decodeFromString<List<String>>(it).firstOrNull() } catch (e: Exception) { null }
+        }
         val licenseToValidate = curation.curatedLicense
             ?: curation.aiSuggestedLicense
             ?: curation.originalLicense
+            ?: declaredFirst
             ?: throw BadRequestException("No license to validate for this item")
 
         validateAndUpdateSpdxInfo(curation.id, licenseToValidate)
@@ -1239,6 +1246,55 @@ class CurationService(
     }
 
     /**
+     * Finalize session without separate approver (when approval is disabled)
+     */
+    fun finalizeSession(
+        scanId: String,
+        curatorId: String,
+        comment: String? = null
+    ): ApprovalStatusResponse {
+        if (settingsRepository?.isApprovalRequired() == true) {
+            throw BadRequestException("Cannot finalize directly: approval workflow is enabled. Use submit-for-approval instead.")
+        }
+
+        val scanUuid = UUID.fromString(scanId)
+        val session = curationSessionRepository.findByScanId(scanUuid)
+            ?: throw NotFoundException("No curation session found for scan: $scanId")
+
+        // Only check that all items have decisions (no EU justification/OR license requirements)
+        val stats = curationRepository.getStatisticsBySessionId(session.id)
+        if (stats.pending > 0) {
+            throw BadRequestException("Cannot finalize: ${stats.pending} items still pending review")
+        }
+
+        // Approve directly — no approval record created, so DB trigger doesn't fire
+        curationSessionRepository.approve(session.id, curatorId, comment = comment)
+
+        // Mark scan as curation complete
+        scanRepository.markCurationComplete(scanUuid)
+
+        // Log audit with SELF_APPROVE action
+        logAuditEvent(
+            entityType = "SESSION",
+            entityId = session.id,
+            action = "SELF_APPROVE",
+            actorId = curatorId,
+            actorRole = "CURATOR",
+            previousState = null,
+            newState = buildJsonObject {
+                put("finalized", true)
+                put("curatorId", curatorId)
+                put("comment", comment ?: "")
+            }.toString(),
+            changeSummary = "Session finalized by $curatorId (approval not required)"
+        )
+
+        logger.info { "Session $scanId finalized by $curatorId (approval not required)" }
+
+        return getApprovalStatus(scanId)
+    }
+
+    /**
      * Get approval status for a session
      */
     fun getApprovalStatus(scanId: String): ApprovalStatusResponse {
@@ -1255,7 +1311,8 @@ class CurationService(
             submittedBy = session.submittedBy,
             submittedAt = session.submittedAt,
             approval = approvalRecord?.toResponse(),
-            readiness = readiness
+            readiness = readiness,
+            requireApproval = settingsRepository?.isApprovalRequired() ?: true
         )
     }
 
@@ -1858,6 +1915,272 @@ class CurationService(
     /**
      * Export NOTICE file
      */
+    // ========================================================================
+    // On-Demand AI Resolution (Phase B)
+    // ========================================================================
+
+    /**
+     * Resolve a single dependency's license using AI
+     */
+    suspend fun resolveForDependency(scanId: String, dependencyId: String): AiSuggestionDetail {
+        if (licenseResolver == null) {
+            throw BadRequestException("AI resolution not available (ANTHROPIC_API_KEY not configured)")
+        }
+
+        val scanUuid = UUID.fromString(scanId)
+        val session = curationSessionRepository.findByScanId(scanUuid)
+            ?: throw NotFoundException("No curation session found for scan: $scanId")
+
+        val curation = curationRepository.findByDependencyId(session.id, dependencyId)
+            ?: throw NotFoundException("Curation item not found: $dependencyId")
+
+        // Build UnresolvedLicense from curation data
+        val declaredLicenses = curation.declaredLicenses?.let {
+            try { json.decodeFromString<List<String>>(it) } catch (_: Exception) { emptyList() }
+        } ?: emptyList()
+
+        val unresolved = com.ortoped.core.model.UnresolvedLicense(
+            dependencyId = curation.dependencyId,
+            dependencyName = curation.dependencyName,
+            licenseText = declaredLicenses.joinToString(", ").ifEmpty { curation.originalLicense },
+            reason = "On-demand AI resolution from dashboard"
+        )
+
+        val suggestion = try {
+            licenseResolver.resolveLicense(unresolved)
+        } catch (e: Exception) {
+            val msg = e.message ?: "Unknown error"
+            if ("401" in msg) {
+                throw BadRequestException("Invalid ANTHROPIC_API_KEY. Please check your API key configuration.")
+            }
+            throw InternalException("AI resolution failed for ${curation.dependencyName}: $msg")
+        } ?: throw InternalException("AI resolution returned no result for ${curation.dependencyName}")
+
+        // Update curation record with AI suggestion
+        val alternatives = if (suggestion.alternatives.isNotEmpty()) {
+            json.encodeToString(suggestion.alternatives)
+        } else null
+
+        curationRepository.updateAiSuggestion(
+            id = curation.id,
+            suggestedLicense = suggestion.suggestedLicense,
+            confidence = suggestion.confidence,
+            reasoning = suggestion.reasoning,
+            alternatives = alternatives
+        )
+
+        return AiSuggestionDetail(
+            suggestedLicense = suggestion.suggestedLicense,
+            confidence = suggestion.confidence,
+            reasoning = suggestion.reasoning,
+            spdxId = suggestion.spdxId,
+            alternatives = suggestion.alternatives
+        )
+    }
+
+    /**
+     * Resolve all pending dependencies without AI suggestions using AI
+     */
+    suspend fun resolveAllWithAi(
+        scanId: String,
+        confidenceThreshold: String = "HIGH"
+    ): BulkAiResolutionResponse {
+        if (licenseResolver == null) {
+            throw BadRequestException("AI resolution not available (ANTHROPIC_API_KEY not configured)")
+        }
+
+        val scanUuid = UUID.fromString(scanId)
+        val session = curationSessionRepository.findByScanId(scanUuid)
+            ?: throw NotFoundException("No curation session found for scan: $scanId")
+
+        // Get all PENDING items without AI suggestions
+        val pendingItems = curationRepository.findBySessionId(session.id)
+            .filter { it.status == CurationStatus.PENDING.value && it.aiSuggestedLicense == null }
+
+        if (pendingItems.isEmpty()) {
+            return BulkAiResolutionResponse(resolved = 0, autoAccepted = 0, failed = 0, results = emptyList())
+        }
+
+        val results = mutableListOf<AiResolutionResult>()
+        var resolvedCount = 0
+        var autoAcceptedCount = 0
+        var failedCount = 0
+
+        // Resolve each dependency
+        for (item in pendingItems) {
+            try {
+                val declaredLicenses = item.declaredLicenses?.let {
+                    try { json.decodeFromString<List<String>>(it) } catch (_: Exception) { emptyList() }
+                } ?: emptyList()
+
+                val unresolved = com.ortoped.core.model.UnresolvedLicense(
+                    dependencyId = item.dependencyId,
+                    dependencyName = item.dependencyName,
+                    licenseText = declaredLicenses.joinToString(", ").ifEmpty { item.originalLicense },
+                    reason = "Bulk AI resolution from dashboard"
+                )
+
+                val suggestion = licenseResolver.resolveLicense(unresolved)
+
+                if (suggestion != null) {
+                    val alternatives = if (suggestion.alternatives.isNotEmpty()) {
+                        json.encodeToString(suggestion.alternatives)
+                    } else null
+
+                    curationRepository.updateAiSuggestion(
+                        id = item.id,
+                        suggestedLicense = suggestion.suggestedLicense,
+                        confidence = suggestion.confidence,
+                        reasoning = suggestion.reasoning,
+                        alternatives = alternatives
+                    )
+
+                    resolvedCount++
+
+                    // Auto-accept if above confidence threshold
+                    val shouldAutoAccept = when (confidenceThreshold.uppercase()) {
+                        "HIGH" -> suggestion.confidence == "HIGH"
+                        "MEDIUM" -> suggestion.confidence in listOf("HIGH", "MEDIUM")
+                        "LOW" -> true
+                        else -> suggestion.confidence == "HIGH"
+                    }
+
+                    if (shouldAutoAccept) {
+                        curationRepository.updateDecision(
+                            id = item.id,
+                            status = CurationStatus.ACCEPTED,
+                            curatedLicense = suggestion.suggestedLicense,
+                            curatorComment = "Auto-accepted by AI (confidence: ${suggestion.confidence})",
+                            curatorId = "ai-auto"
+                        )
+                        autoAcceptedCount++
+                    }
+
+                    results.add(AiResolutionResult(
+                        dependencyId = item.dependencyId,
+                        success = true,
+                        suggestion = AiSuggestionDetail(
+                            suggestedLicense = suggestion.suggestedLicense,
+                            confidence = suggestion.confidence,
+                            reasoning = suggestion.reasoning,
+                            spdxId = suggestion.spdxId,
+                            alternatives = suggestion.alternatives
+                        )
+                    ))
+                } else {
+                    failedCount++
+                    results.add(AiResolutionResult(
+                        dependencyId = item.dependencyId,
+                        success = false,
+                        error = "AI resolution returned no result"
+                    ))
+                }
+            } catch (e: Exception) {
+                failedCount++
+                results.add(AiResolutionResult(
+                    dependencyId = item.dependencyId,
+                    success = false,
+                    error = e.message ?: "Unknown error"
+                ))
+                logger.warn { "AI resolution failed for ${item.dependencyName}: ${e.message}" }
+            }
+        }
+
+        // Recalculate session statistics
+        curationSessionRepository.recalculateStatistics(session.id, curationRepository)
+
+        return BulkAiResolutionResponse(
+            resolved = resolvedCount,
+            autoAccepted = autoAcceptedCount,
+            failed = failedCount,
+            results = results
+        )
+    }
+
+    // ========================================================================
+    // Native JSON Export (Phase B)
+    // ========================================================================
+
+    /**
+     * Export curations as OrtoPed-native JSON with full audit trail
+     */
+    fun exportNativeJson(scanId: String): NativeCurationExportResponse {
+        val scanUuid = UUID.fromString(scanId)
+        val session = curationSessionRepository.findByScanId(scanUuid)
+            ?: throw NotFoundException("No curation session found for scan: $scanId")
+
+        val curations = curationRepository.findBySessionId(session.id)
+            .filter { it.status != CurationStatus.PENDING.value }
+
+        // Get approval info if available
+        val approval = curationRepository.getApprovalRecord(session.id)
+
+        val exportItems = curations.map { curation ->
+            val justification = curationRepository.getJustification(curation.id)
+
+            NativeCurationExportItem(
+                packageId = "${curation.dependencyName}:${curation.dependencyVersion}",
+                concludedLicense = curation.curatedLicense ?: curation.aiSuggestedLicense ?: "NOASSERTION",
+                aiConfidence = curation.aiConfidence,
+                aiReasoning = curation.aiReasoning,
+                curatedBy = curation.curatorId,
+                curatedAt = curation.curatedAt,
+                status = curation.status,
+                justification = justification?.justificationText,
+                approvedBy = approval?.approverId
+            )
+        }
+
+        return NativeCurationExportResponse(
+            scanId = scanId,
+            exportedAt = java.time.Instant.now().toString(),
+            curations = exportItems
+        )
+    }
+
+    // ========================================================================
+    // Policy Impact Preview (Phase B)
+    // ========================================================================
+
+    /**
+     * Get policy impact for a curation item (how many violations accepting would resolve)
+     */
+    fun getPolicyImpact(scanId: String, dependencyId: String): PolicyImpactResponse {
+        val scanUuid = UUID.fromString(scanId)
+
+        // Try to load the scan result and evaluate policy
+        val scan = scanRepository.findById(scanUuid)
+            ?: throw NotFoundException("Scan not found: $scanId")
+
+        // Check if a policy evaluation exists for this scan
+        // We look for violation counts referencing this dependency
+        val resultJson = scan.result ?: return PolicyImpactResponse(
+            violationsResolved = 0,
+            violationDetails = emptyList()
+        )
+
+        return try {
+            val normalizedJson = if (resultJson.startsWith("\"") && resultJson.endsWith("\"")) {
+                json.decodeFromString<String>(resultJson)
+            } else {
+                resultJson
+            }
+            val scanResult = json.decodeFromString<com.ortoped.core.model.ScanResult>(normalizedJson)
+
+            // Count how many unresolved licenses reference this dependency
+            val unresolvedForDep = scanResult.unresolvedLicenses.filter { it.dependencyId == dependencyId }
+            val violations = unresolvedForDep.map { "Unresolved license: ${it.reason}" }
+
+            PolicyImpactResponse(
+                violationsResolved = violations.size,
+                violationDetails = violations
+            )
+        } catch (e: Exception) {
+            logger.warn { "Failed to compute policy impact for $dependencyId: ${e.message}" }
+            PolicyImpactResponse(violationsResolved = 0, violationDetails = emptyList())
+        }
+    }
+
     fun exportNoticeFile(scanId: String): NoticeFileResponse {
         val scanUuid = UUID.fromString(scanId)
         val session = curationSessionRepository.findByScanId(scanUuid)

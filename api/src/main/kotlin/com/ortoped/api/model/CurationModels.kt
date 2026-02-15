@@ -480,7 +480,10 @@ data class EnhancedCurationItemResponse(
     val distributionScope: String = "BINARY",
 
     // Inline explanations for UI
-    val explanations: CurationExplanationsResponse? = null
+    val explanations: CurationExplanationsResponse? = null,
+
+    // Policy impact (Phase B)
+    val policyImpact: PolicyImpactResponse? = null
 )
 
 /**
@@ -634,7 +637,8 @@ data class ApprovalStatusResponse(
     val submittedBy: String? = null,
     val submittedAt: String? = null,
     val approval: ApprovalRecordResponse? = null,
-    val readiness: ApprovalReadinessResponse? = null
+    val readiness: ApprovalReadinessResponse? = null,
+    val requireApproval: Boolean = true
 )
 
 /**
@@ -842,6 +846,84 @@ data class ExportResponse(
     val format: String,
     val filename: String,
     val generatedAt: String
+)
+
+// ============================================================================
+// AI RESOLUTION MODELS (Phase B)
+// ============================================================================
+
+/**
+ * Request for bulk AI resolution
+ */
+@Serializable
+data class BulkAiResolutionRequest(
+    val confidenceThreshold: String = "HIGH"
+)
+
+/**
+ * Response for bulk AI resolution
+ */
+@Serializable
+data class BulkAiResolutionResponse(
+    val resolved: Int,
+    val autoAccepted: Int,
+    val failed: Int,
+    val results: List<AiResolutionResult>
+)
+
+/**
+ * Single AI resolution result
+ */
+@Serializable
+data class AiResolutionResult(
+    val dependencyId: String,
+    val success: Boolean,
+    val suggestion: AiSuggestionDetail? = null,
+    val error: String? = null
+)
+
+// ============================================================================
+// NATIVE CURATION EXPORT MODELS (Phase B)
+// ============================================================================
+
+/**
+ * Native JSON curation export response
+ */
+@Serializable
+data class NativeCurationExportResponse(
+    val version: String = "1.0",
+    val scanId: String,
+    val exportedAt: String,
+    val curations: List<NativeCurationExportItem>
+)
+
+/**
+ * Single item in native curation export
+ */
+@Serializable
+data class NativeCurationExportItem(
+    val packageId: String,
+    val concludedLicense: String,
+    val aiConfidence: String? = null,
+    val aiReasoning: String? = null,
+    val curatedBy: String? = null,
+    val curatedAt: String? = null,
+    val status: String,
+    val justification: String? = null,
+    val approvedBy: String? = null
+)
+
+// ============================================================================
+// POLICY IMPACT MODELS (Phase B)
+// ============================================================================
+
+/**
+ * Policy impact response - shows how many violations would be resolved
+ */
+@Serializable
+data class PolicyImpactResponse(
+    val violationsResolved: Int,
+    val violationDetails: List<String> = emptyList()
 )
 
 /**

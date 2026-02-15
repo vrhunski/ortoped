@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
-import { api, type CurationSession, type CurationItem, type CurationDecision } from '@/api/client'
+import { api, type CurationSession, type CurationItem, type CurationDecision, type PolicyImpactResponse } from '@/api/client'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Button from 'primevue/button'
@@ -47,6 +47,11 @@ const showOrLicenseDialog = ref(false)
 const showSubmitForApprovalDialog = ref(false)
 const currentItem = ref<CurationItem | null>(null)
 const currentOrLicense = ref<any>(null)
+
+// AI Resolution states (Phase B)
+const resolvingAi = ref(false)
+const resolvingAiSingle = ref<string | null>(null)
+const policyImpact = ref<PolicyImpactResponse | null>(null)
 
 // Action states
 const submitting = ref(false)
@@ -193,15 +198,29 @@ const filteredItems = computed(() => {
   return result
 })
 
+// Settings: whether the 4-eyes approval workflow is required
+const requireApproval = computed(() => approvalStatus.value?.requireApproval ?? true)
+
 // EU Compliance: Check if session can be submitted for approval
 const canSubmitForApproval = computed(() => {
+  if (!requireApproval.value) return false  // hide when approval not required
   if (!approvalStatus.value?.readiness) return false
   return approvalStatus.value.readiness.isReady && !approvalStatus.value.isSubmittedForApproval
 })
 
 // EU Compliance: Check if current user can approve (must be different from submitter)
 const isSubmittedForApproval = computed(() => {
+  if (!requireApproval.value) return false
   return approvalStatus.value?.isSubmittedForApproval || false
+})
+
+// Check if session can be finalized directly (approval not required)
+const canFinalize = computed(() => {
+  if (requireApproval.value) return false
+  if (!session.value) return false
+  if (session.value.status === 'APPROVED') return false
+  // Only require all items to be decided (no pending), not EU justifications/OR licenses
+  return session.value.statistics.pending === 0
 })
 
 // EU Compliance: Check if item requires justification
@@ -391,6 +410,124 @@ async function quickReject(item: CurationItem) {
   }
 }
 
+// ====================================================================
+// AI Resolution Methods (Phase B)
+// ====================================================================
+
+async function resolveAllWithAi() {
+  if (!session.value) return
+
+  resolvingAi.value = true
+  try {
+    const response = await api.resolveAllWithAi(session.value.scanId)
+    const data = response.data
+
+    // Refresh items to show new AI suggestions
+    await fetchData()
+
+    toast.add({
+      severity: 'success',
+      summary: 'AI Resolution Complete',
+      detail: `Resolved ${data.resolved} deps, ${data.autoAccepted} auto-accepted, ${data.failed} failed`,
+      life: 5000
+    })
+  } catch (e: any) {
+    console.error('Failed to resolve with AI', e)
+    toast.add({
+      severity: 'error',
+      summary: 'AI Resolution Failed',
+      detail: e.response?.data?.error || 'Failed to resolve licenses with AI',
+      life: 5000
+    })
+  } finally {
+    resolvingAi.value = false
+  }
+}
+
+async function resolveItemWithAi(item: CurationItem) {
+  if (!session.value) return
+
+  resolvingAiSingle.value = item.dependencyId
+  try {
+    const response = await api.resolveWithAi(session.value.scanId, item.dependencyId)
+
+    // Update item in-place with the returned AI suggestion
+    const index = items.value.findIndex(i => i.id === item.id)
+    if (index !== -1) {
+      items.value[index] = {
+        ...items.value[index],
+        aiSuggestion: response.data
+      }
+    }
+
+    // Also update currentItem if it's the same
+    if (currentItem.value?.id === item.id) {
+      currentItem.value = {
+        ...currentItem.value,
+        aiSuggestion: response.data
+      }
+    }
+
+    toast.add({
+      severity: 'success',
+      summary: 'AI Suggestion',
+      detail: `${response.data.suggestedLicense} (${response.data.confidence})`,
+      life: 3000
+    })
+  } catch (e: any) {
+    console.error('Failed to get AI suggestion', e)
+    toast.add({
+      severity: 'error',
+      summary: 'Error',
+      detail: e.response?.data?.error || 'Failed to get AI suggestion',
+      life: 3000
+    })
+  } finally {
+    resolvingAiSingle.value = null
+  }
+}
+
+// ====================================================================
+// Export Methods (Phase B)
+// ====================================================================
+
+async function exportNativeJson() {
+  if (!session.value) return
+
+  try {
+    const res = await api.exportNativeCurations(session.value.scanId)
+    const data = res.data
+    const jsonStr = JSON.stringify(data, null, 2)
+    const blob = new Blob([jsonStr], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `curations.ortoped.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.add({ severity: 'success', summary: 'Exported', detail: 'Native JSON curations downloaded', life: 2000 })
+  } catch (e) {
+    console.error('Failed to export native JSON', e)
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to export native JSON', life: 3000 })
+  }
+}
+
+// ====================================================================
+// Policy Impact Methods (Phase B)
+// ====================================================================
+
+async function fetchPolicyImpact(dependencyId: string) {
+  if (!session.value) return
+
+  try {
+    const res = await api.getPolicyImpact(session.value.scanId, dependencyId)
+    policyImpact.value = res.data
+  } catch (e) {
+    console.error('Failed to fetch policy impact', e)
+    policyImpact.value = null
+  }
+}
+
 // Helpers
 function getStatusSeverity(status: string): 'success' | 'warning' | 'danger' | 'info' | 'secondary' {
   switch (status) {
@@ -453,8 +590,8 @@ async function fetchEUComplianceData() {
   if (!session.value) return
 
   try {
-    // Fetch approval status
-    const approvalRes = await fetch(`/api/v1/scans/${session.value.scanId}/curation/approval/readiness`)
+    // Fetch approval status (includes requireApproval setting)
+    const approvalRes = await fetch(`/api/v1/scans/${session.value.scanId}/curation/approval`)
     if (approvalRes.ok) {
       approvalStatus.value = await approvalRes.json()
     }
@@ -584,6 +721,35 @@ async function submitForApproval() {
   }
 }
 
+// Finalize session directly (when approval is disabled)
+async function finalizeSession() {
+  if (!session.value) return
+
+  submitting.value = true
+  try {
+    const res = await fetch(`/api/v1/scans/${session.value.scanId}/curation/finalize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Curator-Id': 'curator' },
+      body: JSON.stringify({ comment: 'Finalized by curator' })
+    })
+
+    if (!res.ok) {
+      const error = await res.json()
+      throw new Error(error.error || 'Failed to finalize')
+    }
+
+    await fetchData()
+    await fetchEUComplianceData()
+
+    toast.add({ severity: 'success', summary: 'Finalized', detail: 'Session finalized successfully', life: 3000 })
+  } catch (e: any) {
+    console.error('Failed to finalize session', e)
+    toast.add({ severity: 'error', summary: 'Error', detail: e.message || 'Failed to finalize', life: 3000 })
+  } finally {
+    submitting.value = false
+  }
+}
+
 // Approve session (EU two-role workflow - different person than curator)
 async function decideApproval(decision: 'APPROVED' | 'REJECTED') {
   if (!session.value || !approverName.value || !approverRole.value) return
@@ -678,10 +844,14 @@ function resetJustificationForm() {
   }
 }
 
-// Enhanced open item detail with explanations
+// Enhanced open item detail with explanations and policy impact
 async function openItemDetailWithExplanations(item: CurationItem) {
   openItemDetail(item)
-  await fetchExplanations(item.dependencyId)
+  policyImpact.value = null
+  await Promise.all([
+    fetchExplanations(item.dependencyId),
+    fetchPolicyImpact(item.dependencyId)
+  ])
 }
 
 // Validate SPDX for current item
@@ -950,6 +1120,22 @@ onMounted(initializeData)
         </div>
         <div class="header-actions">
           <Button
+            v-if="session.status !== 'APPROVED'"
+            label="Resolve All with AI"
+            icon="pi pi-sparkles"
+            severity="help"
+            :loading="resolvingAi"
+            @click="resolveAllWithAi"
+          />
+          <Button
+            v-if="canFinalize"
+            label="Finalize"
+            icon="pi pi-check-circle"
+            severity="success"
+            :loading="submitting"
+            @click="finalizeSession"
+          />
+          <Button
             v-if="canSubmitForApproval"
             label="Submit for Approval"
             icon="pi pi-send"
@@ -964,11 +1150,16 @@ onMounted(initializeData)
             @click="showApproveDialog = true"
           />
           <Button
-            v-if="session.status === 'APPROVED'"
             label="Export YAML"
             icon="pi pi-file-export"
             severity="secondary"
             @click="exportCurationsYaml"
+          />
+          <Button
+            label="Export JSON"
+            icon="pi pi-file"
+            severity="secondary"
+            @click="exportNativeJson"
           />
           <Button
             v-if="session.status === 'APPROVED'"
@@ -1053,7 +1244,7 @@ onMounted(initializeData)
       </Message>
 
       <!-- EU Compliance: Approval Workflow Status -->
-      <div v-if="isSubmittedForApproval && session.status !== 'APPROVED'" class="pending-approval-banner">
+      <div v-if="requireApproval && isSubmittedForApproval && session.status !== 'APPROVED'" class="pending-approval-banner">
         <i class="pi pi-clock"></i>
         <div>
           <strong>Awaiting Approval</strong>
@@ -1080,7 +1271,7 @@ onMounted(initializeData)
       </div>
 
       <!-- EU Compliance: Readiness Info -->
-      <div v-if="approvalStatus?.readiness && !isSubmittedForApproval && session.status !== 'APPROVED'" class="readiness-banner">
+      <div v-if="requireApproval && approvalStatus?.readiness && !isSubmittedForApproval && session.status !== 'APPROVED'" class="readiness-banner">
         <div class="readiness-header">
           <h4>Approval Readiness</h4>
           <Badge
@@ -1201,7 +1392,20 @@ onMounted(initializeData)
                   {{ data.aiSuggestion.confidence }}
                 </span>
               </div>
-              <span v-else class="no-suggestion">No AI suggestion</span>
+              <div v-else class="no-suggestion-row">
+                <span class="no-suggestion">No AI suggestion</span>
+                <Button
+                  v-if="session?.status !== 'APPROVED'"
+                  icon="pi pi-sparkles"
+                  severity="help"
+                  text
+                  rounded
+                  size="small"
+                  :loading="resolvingAiSingle === data.dependencyId"
+                  @click.stop="resolveItemWithAi(data)"
+                  title="Get AI Suggestion"
+                />
+              </div>
             </template>
           </Column>
 
@@ -1338,15 +1542,25 @@ onMounted(initializeData)
               <div class="license-comparison">
                 <div class="license-box original">
                   <label>Original License</label>
-                  <span>{{ currentItem.originalConcludedLicense || 'Unknown' }}</span>
+                  <span>{{ currentItem.originalConcludedLicense || currentItem.declaredLicenses?.[0] || 'Unknown' }}</span>
                 </div>
                 <i class="pi pi-arrow-right"></i>
                 <div class="license-box suggested">
                   <label>AI Suggested</label>
-                  <span>{{ currentItem.aiSuggestion?.suggestedLicense || 'None' }}</span>
+                  <span v-if="currentItem.aiSuggestion?.suggestedLicense">{{ currentItem.aiSuggestion.suggestedLicense }}</span>
+                  <span v-else>None</span>
                   <span v-if="currentItem.aiSuggestion?.confidence" :class="['confidence-badge', getConfidenceClass(currentItem.aiSuggestion.confidence)]">
                     {{ currentItem.aiSuggestion.confidence }}
                   </span>
+                  <Button
+                    v-if="!currentItem.aiSuggestion?.suggestedLicense && session?.status !== 'APPROVED'"
+                    label="Get AI Suggestion"
+                    icon="pi pi-sparkles"
+                    severity="help"
+                    size="small"
+                    :loading="resolvingAiSingle === currentItem.dependencyId"
+                    @click="resolveItemWithAi(currentItem)"
+                  />
                 </div>
                 <i class="pi pi-arrow-right"></i>
                 <div class="license-box spdx">
@@ -1355,6 +1569,18 @@ onMounted(initializeData)
                   <span v-if="currentItem.spdxLicense || currentItem.aiSuggestion?.spdxId" :class="['spdx-badge', getSpdxValidationClass(currentItem.spdxValidated)]">
                     {{ currentItem.spdxValidated ? '✓ Valid' : '⚠ Needs Review' }}
                   </span>
+                </div>
+              </div>
+
+              <!-- Declared & Detected Licenses Context -->
+              <div v-if="currentItem.declaredLicenses?.length || currentItem.detectedLicenses?.length" class="license-context-box">
+                <div v-if="currentItem.declaredLicenses?.length" class="license-context-row">
+                  <label>Declared Licenses:</label>
+                  <span v-for="(lic, idx) in currentItem.declaredLicenses" :key="'d-' + idx" class="license-tag declared">{{ lic }}</span>
+                </div>
+                <div v-if="currentItem.detectedLicenses?.length" class="license-context-row">
+                  <label>Detected Licenses:</label>
+                  <span v-for="(lic, idx) in currentItem.detectedLicenses" :key="'t-' + idx" class="license-tag detected">{{ lic }}</span>
                 </div>
               </div>
 
@@ -1434,6 +1660,17 @@ onMounted(initializeData)
                 <label>AI Reasoning</label>
                 <p>{{ currentItem.aiSuggestion.reasoning }}</p>
               </div>
+            </div>
+
+            <!-- Policy Impact Badge (Phase B) -->
+            <div v-if="policyImpact && policyImpact.violationsResolved > 0" class="detail-section policy-impact-section">
+              <div class="policy-impact-badge">
+                <i class="pi pi-shield"></i>
+                <span>Accepting resolves <strong>{{ policyImpact.violationsResolved }}</strong> policy violation{{ policyImpact.violationsResolved > 1 ? 's' : '' }}</span>
+              </div>
+              <ul v-if="policyImpact.violationDetails.length" class="policy-violation-list">
+                <li v-for="(detail, idx) in policyImpact.violationDetails" :key="idx">{{ detail }}</li>
+              </ul>
             </div>
 
             <div v-if="session?.status !== 'APPROVED'" class="detail-section">
@@ -2202,6 +2439,43 @@ onMounted(initializeData)
   color: #94a3b8;
 }
 
+.no-suggestion-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Policy Impact Badge */
+.policy-impact-section {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+}
+
+.policy-impact-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #15803d;
+  font-size: 0.9rem;
+}
+
+.policy-impact-badge i {
+  font-size: 1.1rem;
+}
+
+.policy-violation-list {
+  margin: 0.5rem 0 0 1.5rem;
+  padding: 0;
+  font-size: 0.85rem;
+  color: #166534;
+}
+
+.policy-violation-list li {
+  margin-bottom: 0.25rem;
+}
+
 .action-buttons {
   display: flex;
   gap: 0.25rem;
@@ -2439,6 +2713,48 @@ onMounted(initializeData)
 
 .license-box.spdx {
   background: #eff6ff;
+}
+
+.license-context-box {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: #fafafa;
+  border-radius: 0.5rem;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.license-context-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.license-context-row label {
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 600;
+  min-width: 120px;
+}
+
+.license-tag {
+  font-size: 0.75rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.25rem;
+  font-weight: 500;
+}
+
+.license-tag.declared {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.license-tag.detected {
+  background: #fef3c7;
+  color: #92400e;
 }
 
 .spdx-info-box {

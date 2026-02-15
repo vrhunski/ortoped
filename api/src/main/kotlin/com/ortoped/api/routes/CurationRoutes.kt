@@ -74,6 +74,25 @@ fun Route.curationRoutes(curationService: CurationService) {
             call.respond(HttpStatusCode.OK, response)
         }
 
+        /**
+         * Finalize session directly (when approval is disabled)
+         * POST /scans/{scanId}/curation/finalize
+         */
+        post("/finalize") {
+            val scanId = call.parameters["scanId"]
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
+
+            val curatorId = call.request.headers["X-Curator-Id"] ?: "anonymous"
+            val request = try {
+                call.receive<ApprovalRequest>()
+            } catch (e: Exception) {
+                ApprovalRequest()
+            }
+
+            val response = curationService.finalizeSession(scanId, curatorId, request.comment)
+            call.respond(HttpStatusCode.OK, response)
+        }
+
         // ====================================================================
         // Curation Items
         // ====================================================================
@@ -440,6 +459,60 @@ fun Route.curationRoutes(curationService: CurationService) {
         }
 
         // ====================================================================
+        // On-Demand AI Resolution (Phase B)
+        // ====================================================================
+
+        /**
+         * Resolve a single dependency's license using AI
+         * POST /scans/{scanId}/curation/resolve-ai/{dependencyId}
+         */
+        post("/resolve-ai/{dependencyId}") {
+            val scanId = call.parameters["scanId"]
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
+            val dependencyId = call.parameters["dependencyId"]
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Dependency ID required", 400))
+
+            val response = curationService.resolveForDependency(scanId, dependencyId)
+            call.respond(HttpStatusCode.OK, response)
+        }
+
+        /**
+         * Bulk AI resolution for all pending items without suggestions
+         * POST /scans/{scanId}/curation/resolve-ai
+         */
+        post("/resolve-ai") {
+            val scanId = call.parameters["scanId"]
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
+
+            val request = try {
+                call.receive<BulkAiResolutionRequest>()
+            } catch (e: Exception) {
+                BulkAiResolutionRequest()
+            }
+
+            val response = curationService.resolveAllWithAi(scanId, request.confidenceThreshold)
+            call.respond(HttpStatusCode.OK, response)
+        }
+
+        // ====================================================================
+        // Policy Impact Preview (Phase B)
+        // ====================================================================
+
+        /**
+         * Get policy impact for a curation item
+         * GET /scans/{scanId}/curation/items/{dependencyId}/policy-impact
+         */
+        get("/items/{dependencyId}/policy-impact") {
+            val scanId = call.parameters["scanId"]
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
+            val dependencyId = call.parameters["dependencyId"]
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Dependency ID required", 400))
+
+            val response = curationService.getPolicyImpact(scanId, dependencyId)
+            call.respond(HttpStatusCode.OK, response)
+        }
+
+        // ====================================================================
         // Export
         // ====================================================================
 
@@ -452,6 +525,18 @@ fun Route.curationRoutes(curationService: CurationService) {
                 ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
 
             val response = curationService.exportCurationsYaml(scanId)
+            call.respond(HttpStatusCode.OK, response)
+        }
+
+        /**
+         * Export curations as OrtoPed-native JSON
+         * GET /scans/{scanId}/curation/export/curations-native
+         */
+        get("/export/curations-native") {
+            val scanId = call.parameters["scanId"]
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ErrorResponse("bad_request", "Scan ID required", 400))
+
+            val response = curationService.exportNativeJson(scanId)
             call.respond(HttpStatusCode.OK, response)
         }
 

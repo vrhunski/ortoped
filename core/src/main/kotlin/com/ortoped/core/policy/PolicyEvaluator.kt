@@ -10,11 +10,16 @@ import java.time.Instant
 private val logger = KotlinLogging.logger {}
 
 /**
- * Evaluates scan results against policy rules
+ * Evaluates scan results against policy rules.
+ *
+ * Supports an optional [GraphAwareLicenseClassifier] that leverages the Knowledge Graph
+ * for richer license categorization. Falls back to the YAML-based [LicenseClassifier]
+ * when no graph-aware classifier is provided.
  */
 class PolicyEvaluator(
     private val config: PolicyConfig,
-    private val explanationGenerator: ExplanationGenerator? = null
+    private val explanationGenerator: ExplanationGenerator? = null,
+    private val graphClassifier: GraphAwareLicenseClassifier? = null
 ) {
     private val classifier = LicenseClassifier(config)
 
@@ -47,7 +52,7 @@ class PolicyEvaluator(
 
             // Determine effective license (considering AI suggestions)
             val effectiveLicense = getEffectiveLicense(dependency)
-            val category = classifier.classify(effectiveLicense)
+            val category = graphClassifier?.classify(effectiveLicense) ?: classifier.classify(effectiveLicense)
 
             // Track distribution
             categoryDistribution[category] = (categoryDistribution[category] ?: 0) + 1

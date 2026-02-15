@@ -38,7 +38,8 @@ class ProjectRepository {
         name: String,
         repositoryUrl: String? = null,
         defaultBranch: String = "main",
-        policyId: UUID? = null
+        policyId: UUID? = null,
+        distributionScope: String = "BINARY"
     ): ProjectEntity = transaction {
         val id = UUID.randomUUID()
         val now = Clock.System.now()
@@ -49,6 +50,7 @@ class ProjectRepository {
             it[Projects.repositoryUrl] = repositoryUrl
             it[Projects.defaultBranch] = defaultBranch
             it[Projects.policyId] = policyId
+            it[Projects.distributionScope] = distributionScope
             it[Projects.createdAt] = now
         }
 
@@ -58,15 +60,17 @@ class ProjectRepository {
             repositoryUrl = repositoryUrl,
             defaultBranch = defaultBranch,
             policyId = policyId,
+            distributionScope = distributionScope,
             createdAt = now.toString()
         )
     }
 
-    fun update(id: UUID, name: String? = null, repositoryUrl: String? = null, policyId: UUID? = null): Boolean = transaction {
+    fun update(id: UUID, name: String? = null, repositoryUrl: String? = null, policyId: UUID? = null, distributionScope: String? = null): Boolean = transaction {
         val updated = Projects.update({ Projects.id eq id }) {
             name?.let { n -> it[Projects.name] = n }
             repositoryUrl?.let { r -> it[Projects.repositoryUrl] = r }
             policyId?.let { p -> it[Projects.policyId] = p }
+            distributionScope?.let { d -> it[Projects.distributionScope] = d }
         }
         updated > 0
     }
@@ -81,6 +85,7 @@ class ProjectRepository {
         repositoryUrl = this[Projects.repositoryUrl],
         defaultBranch = this[Projects.defaultBranch],
         policyId = this[Projects.policyId],
+        distributionScope = this[Projects.distributionScope],
         createdAt = this[Projects.createdAt].toString()
     )
 }
@@ -91,5 +96,6 @@ data class ProjectEntity(
     val repositoryUrl: String?,
     val defaultBranch: String,
     val policyId: UUID?,
+    val distributionScope: String = "BINARY",
     val createdAt: String
 )

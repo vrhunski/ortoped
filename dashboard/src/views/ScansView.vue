@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { api, type Project, type ScanSummary } from '@/api/client'
+import { useDashboardStore } from '@/stores/dashboard'
 import { RouterLink } from 'vue-router'
+
+const dashboardStore = useDashboardStore()
 
 const scans = ref<ScanSummary[]>([])
 const loading = ref(true)
@@ -113,7 +116,10 @@ function getStatusClass(status: string) {
   }
 }
 
-onMounted(fetchScans)
+onMounted(() => {
+  fetchScans()
+  dashboardStore.fetchDashboardData()
+})
 
 watch(
   () => scans.value.some(s => s.status === 'scanning' && !!s.startedAt && !s.completedAt),
@@ -135,6 +141,49 @@ onUnmounted(() => {
       <h1>Scans</h1>
       <p class="subtitle">View all license scans across projects</p>
     </header>
+
+    <!-- Stats Cards -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon scans">
+          <i class="pi pi-search"></i>
+        </div>
+        <div class="stat-content">
+          <span class="stat-value">{{ dashboardStore.stats.totalScans }}</span>
+          <span class="stat-label">Total Scans</span>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon resolved">
+          <i class="pi pi-check-circle"></i>
+        </div>
+        <div class="stat-content">
+          <span class="stat-value">{{ dashboardStore.stats.resolutionRate }}%</span>
+          <span class="stat-label">License Resolution</span>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon ai">
+          <i class="pi pi-bolt"></i>
+        </div>
+        <div class="stat-content">
+          <span class="stat-value">{{ dashboardStore.stats.aiResolvedLicenses }}</span>
+          <span class="stat-label">AI Resolved</span>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon compliance">
+          <i class="pi pi-verified"></i>
+        </div>
+        <div class="stat-content">
+          <span class="stat-value">{{ dashboardStore.stats.unresolvedLicenses }}</span>
+          <span class="stat-label">Unresolved</span>
+        </div>
+      </div>
+    </div>
 
     <div v-if="loading" class="loading">
       <i class="pi pi-spin pi-spinner"></i> Loading scans...
@@ -204,6 +253,42 @@ onUnmounted(() => {
 .page-header { margin-bottom: 2rem; }
 .page-header h1 { margin: 0; font-size: 2rem; color: #1e293b; }
 .subtitle { color: #64748b; margin-top: 0.25rem; }
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.stat-card {
+  background: white;
+  border-radius: 1rem;
+  padding: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.stat-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+}
+
+.stat-icon.scans { background: #fce7f3; color: #ec4899; }
+.stat-icon.resolved { background: #d1fae5; color: #10b981; }
+.stat-icon.ai { background: #fef3c7; color: #f59e0b; }
+.stat-icon.compliance { background: #fee2e2; color: #ef4444; }
+
+.stat-content { display: flex; flex-direction: column; }
+.stat-value { font-size: 1.5rem; font-weight: 700; color: #1e293b; }
+.stat-label { color: #64748b; font-size: 0.8rem; }
 
 .section {
   background: white;

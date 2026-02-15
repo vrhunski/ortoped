@@ -16,8 +16,11 @@ import java.time.Duration
 private val logger = KotlinLogging.logger {}
 
 // Load API key once at class initialization - returns null if not set
+// Prioritizes .env file (system property) over environment variable for local development
 private val anthropicApiKey: String? by lazy {
-    System.getenv("ANTHROPIC_API_KEY")?.takeIf { it.isNotBlank() }
+    // First check .env file (system property), then environment variable
+    System.getProperty("ANTHROPIC_API_KEY")?.takeIf { it.isNotBlank() }
+        ?: System.getenv("ANTHROPIC_API_KEY")?.takeIf { it.isNotBlank() }
 }
 
 class LicenseResolver {

@@ -4,6 +4,7 @@ import com.ortoped.api.routes.*
 import com.ortoped.api.service.*
 import com.ortoped.api.repository.ScanRepository
 import com.ortoped.api.repository.OrtCacheRepository
+import com.ortoped.api.repository.SettingsRepository
 import io.ktor.server.application.*
 import io.ktor.server.http.content.*
 import io.ktor.server.routing.*
@@ -19,7 +20,8 @@ fun Application.configureRouting(
     templateService: TemplateService,
     reportService: ReportService,
     licenseGraphService: LicenseGraphService,
-    ortCacheRepository: OrtCacheRepository
+    ortCacheRepository: OrtCacheRepository,
+    settingsRepository: SettingsRepository
 ) {
     routing {
         // API routes
@@ -35,6 +37,7 @@ fun Application.configureRouting(
             reportRoutes(reportService)
             licenseGraphRoutes(licenseGraphService)
             cacheRoutes(ortCacheRepository)
+            settingsRoutes(settingsRepository)
         }
 
         // Serve Vue.js static files (dashboard)
