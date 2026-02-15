@@ -806,14 +806,16 @@ class ReportService(
             json.decodeFromString<ScanResult>(it)
         } ?: throw BadRequestException("Scan has no result")
 
-        // Get curation session - must be approved for EU compliance report
+        // Get curation session - must be approved or finalized for EU compliance report
         val session = curationSessionRepository.findByScanId(scanUuid)
-        if (session == null || session.status != "APPROVED") {
+        val allowedStatuses = setOf("APPROVED", "COMPLETED")
+        if (session == null || session.status !in allowedStatuses) {
             throw BadRequestException(
-                "EU Compliance Report requires approved curation. " +
+                "EU Compliance Report requires approved or finalized curation. " +
                 "Current status: ${session?.status ?: "NO_CURATION"}"
             )
         }
+        val approvalBypassed = session.status != "APPROVED"
 
         // Get project info
         val project = scanEntity.projectId?.let { projectRepository.findById(it) }
@@ -835,10 +837,11 @@ class ReportService(
             generatedAt = now,
             regulatory = EuRegulatoryInfo(
                 framework = "EU Cyber Resilience Act / German IT Security Act",
-                complianceLevel = "FULL",
-                auditReady = true,
-                fourEyesPrincipleApplied = session.approvedBy != null,
-                allLicensesDocumented = curations.all { it.status != "PENDING" }
+                complianceLevel = if (approvalBypassed) "PARTIAL" else "FULL",
+                auditReady = !approvalBypassed,
+                fourEyesPrincipleApplied = session.approvedBy != null && !approvalBypassed,
+                allLicensesDocumented = curations.all { it.status != "PENDING" },
+                approvalBypassed = approvalBypassed
             ),
             project = EuProjectInfo(
                 id = project?.id?.toString(),
@@ -846,7 +849,7 @@ class ReportService(
                 repositoryUrl = project?.repositoryUrl,
                 branch = project?.defaultBranch,
                 scanDate = scanResult.scanDate,
-                distributionScope = "BINARY" // TODO: Get from project settings
+                distributionScope = project?.distributionScope ?: "BINARY"
             ),
             workflowSummary = EuWorkflowSummary(
                 scanCompletedAt = scanEntity.completedAt ?: scanEntity.createdAt,
@@ -1511,7 +1514,8 @@ data class EuRegulatoryInfo(
     val complianceLevel: String,
     val auditReady: Boolean,
     val fourEyesPrincipleApplied: Boolean,
-    val allLicensesDocumented: Boolean
+    val allLicensesDocumented: Boolean,
+    val approvalBypassed: Boolean = false
 )
 
 @kotlinx.serialization.Serializable

@@ -5,6 +5,11 @@ import com.ortoped.core.graph.model.*
 import com.ortoped.core.policy.PolicyViolation
 import com.ortoped.core.policy.Severity
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 private val logger = KotlinLogging.logger {}
 
@@ -15,8 +20,12 @@ private val logger = KotlinLogging.logger {}
  * that help developers understand WHY a license is problematic, not just THAT it is.
  */
 class ExplanationGenerator(
-    private val graph: LicenseKnowledgeGraph
+    private val graph: LicenseKnowledgeGraph,
+    private val pastDecisionLookup: PastDecisionLookup? = null
 ) {
+    private val alternativesRegistry: Map<String, List<AlternativeDependency>> by lazy {
+        loadAlternativesRegistry()
+    }
 
     /**
      * Generate a fully enhanced violation with explanations and resolutions.
@@ -38,7 +47,7 @@ class ExplanationGenerator(
             message = violation.message,
             explanations = explanations,
             resolutions = resolutions,
-            similarPastDecisions = emptyList() // TODO: Integrate with curation history
+            similarPastDecisions = pastDecisionLookup?.findPastDecisions(violation.license) ?: emptyList()
         )
     }
 
@@ -568,22 +577,42 @@ class ExplanationGenerator(
     }
 
     private fun findAlternatives(violation: PolicyViolation): List<AlternativeDependency> {
-        // TODO: Integrate with a dependency alternatives database
-        // For now, return common alternatives for well-known libraries
-        return when {
-            violation.dependencyName.contains("moment", ignoreCase = true) -> listOf(
-                AlternativeDependency("date-fns", "3.x", "MIT", "Modern, modular date library"),
-                AlternativeDependency("dayjs", "1.x", "MIT", "Lightweight Moment.js alternative")
-            )
-            violation.dependencyName.contains("request", ignoreCase = true) -> listOf(
-                AlternativeDependency("axios", "1.x", "MIT", "Promise-based HTTP client"),
-                AlternativeDependency("node-fetch", "3.x", "MIT", "Lightweight fetch implementation")
-            )
-            violation.dependencyName.contains("underscore", ignoreCase = true) -> listOf(
-                AlternativeDependency("lodash", "4.x", "MIT", "Modern utility library"),
-                AlternativeDependency("ramda", "0.x", "MIT", "Functional programming utilities")
-            )
-            else -> emptyList()
+        val depName = violation.dependencyName.lowercase()
+
+        // Search the alternatives registry for matching package name patterns
+        for ((pattern, alternatives) in alternativesRegistry) {
+            if (depName.contains(pattern.lowercase())) {
+                return alternatives
+            }
+        }
+
+        return emptyList()
+    }
+
+    private fun loadAlternativesRegistry(): Map<String, List<AlternativeDependency>> {
+        return try {
+            val resourceStream = this::class.java.classLoader.getResourceAsStream("alternatives.json")
+                ?: return emptyMap()
+
+            val jsonText = resourceStream.bufferedReader().use { it.readText() }
+            val json = Json { ignoreUnknownKeys = true }
+            val root = json.parseToJsonElement(jsonText).jsonObject
+            val alternatives = root["alternatives"]?.jsonObject ?: return emptyMap()
+
+            alternatives.mapValues { (_, value) ->
+                value.jsonArray.map { entry ->
+                    val obj = entry.jsonObject
+                    AlternativeDependency(
+                        name = obj["name"]?.jsonPrimitive?.content ?: "",
+                        version = obj["version"]?.jsonPrimitive?.content,
+                        license = obj["license"]?.jsonPrimitive?.content ?: "Unknown",
+                        reason = obj["reason"]?.jsonPrimitive?.content ?: ""
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            logger.warn(e) { "Failed to load alternatives registry from alternatives.json" }
+            emptyMap()
         }
     }
 

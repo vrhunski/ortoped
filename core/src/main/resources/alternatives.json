@@ -1,0 +1,81 @@
+{
+  "description": "Dependency alternatives registry for commonly-flagged packages. Maps package name patterns to permissively-licensed alternatives.",
+  "alternatives": {
+    "moment": [
+      { "name": "date-fns", "version": "3.x", "license": "MIT", "reason": "Modern, modular date library with tree-shaking" },
+      { "name": "dayjs", "version": "1.x", "license": "MIT", "reason": "Lightweight Moment.js drop-in alternative (2KB)" },
+      { "name": "luxon", "version": "3.x", "license": "MIT", "reason": "Immutable date library by Moment.js team" }
+    ],
+    "request": [
+      { "name": "axios", "version": "1.x", "license": "MIT", "reason": "Promise-based HTTP client for browser and Node.js" },
+      { "name": "node-fetch", "version": "3.x", "license": "MIT", "reason": "Lightweight fetch implementation for Node.js" },
+      { "name": "got", "version": "14.x", "license": "MIT", "reason": "Human-friendly HTTP request library" }
+    ],
+    "underscore": [
+      { "name": "lodash", "version": "4.x", "license": "MIT", "reason": "Modern utility library, superset of underscore" },
+      { "name": "ramda", "version": "0.x", "license": "MIT", "reason": "Functional programming utilities with auto-currying" }
+    ],
+    "mysql": [
+      { "name": "mariadb", "version": "3.x", "license": "MIT", "reason": "MariaDB connector with MySQL compatibility" },
+      { "name": "mysql2", "version": "3.x", "license": "MIT", "reason": "Fast MySQL driver with prepared statements" }
+    ],
+    "readline": [
+      { "name": "readline-sync", "version": "1.x", "license": "MIT", "reason": "Synchronous readline for interactive CLI" },
+      { "name": "inquirer", "version": "9.x", "license": "MIT", "reason": "Interactive command-line prompts" }
+    ],
+    "log4j": [
+      { "name": "slf4j-api", "version": "2.x", "license": "MIT", "reason": "Simple Logging Facade for Java" },
+      { "name": "logback", "version": "1.x", "license": "EPL-1.0 OR LGPL-2.1", "reason": "Successor to log4j by original author" },
+      { "name": "tinylog", "version": "2.x", "license": "Apache-2.0", "reason": "Lightweight logging framework" }
+    ],
+    "hibernate": [
+      { "name": "jooq", "version": "3.x", "license": "Apache-2.0", "reason": "Type-safe SQL query builder (open-source edition)" },
+      { "name": "exposed", "version": "0.x", "license": "Apache-2.0", "reason": "Kotlin SQL framework by JetBrains" }
+    ],
+    "json-java": [
+      { "name": "jackson-databind", "version": "2.x", "license": "Apache-2.0", "reason": "High-performance JSON processor" },
+      { "name": "gson", "version": "2.x", "license": "Apache-2.0", "reason": "Google's JSON library" },
+      { "name": "kotlinx-serialization-json", "version": "1.x", "license": "Apache-2.0", "reason": "Kotlin multiplatform JSON serialization" }
+    ],
+    "commons-io": [
+      { "name": "okio", "version": "3.x", "license": "Apache-2.0", "reason": "Modern I/O library by Square" }
+    ],
+    "commons-lang": [
+      { "name": "guava", "version": "33.x", "license": "Apache-2.0", "reason": "Google core libraries for Java" },
+      { "name": "kotlin-stdlib", "version": "2.x", "license": "Apache-2.0", "reason": "Kotlin standard library covers most commons-lang use cases" }
+    ],
+    "itext": [
+      { "name": "openpdf", "version": "2.x", "license": "LGPL-2.1 OR MPL-2.0", "reason": "Open-source fork of iText 4" },
+      { "name": "apache-pdfbox", "version": "3.x", "license": "Apache-2.0", "reason": "Apache PDF library" }
+    ],
+    "mongo-java-driver": [
+      { "name": "mongodb-driver-sync", "version": "5.x", "license": "Apache-2.0", "reason": "Official MongoDB Java driver (Apache-licensed since 4.x)" }
+    ],
+    "jasper": [
+      { "name": "apache-poi", "version": "5.x", "license": "Apache-2.0", "reason": "Apache library for document generation" },
+      { "name": "openhtmltopdf", "version": "1.x", "license": "LGPL-2.1", "reason": "HTML to PDF renderer" }
+    ],
+    "ghostscript": [
+      { "name": "imagemagick", "version": "7.x", "license": "Apache-2.0", "reason": "Image manipulation suite" }
+    ],
+    "ffmpeg": [
+      { "name": "javacv", "version": "1.x", "license": "Apache-2.0", "reason": "Java wrapper for OpenCV and FFmpeg (wrapper is Apache-licensed)" }
+    ],
+    "chardet": [
+      { "name": "charset-normalizer", "version": "3.x", "license": "MIT", "reason": "Python charset detection, LGPL-free alternative" }
+    ],
+    "pillow": [
+      { "name": "opencv-python", "version": "4.x", "license": "Apache-2.0", "reason": "Computer vision library with image processing" }
+    ],
+    "qt": [
+      { "name": "gtk", "version": "4.x", "license": "LGPL-2.1", "reason": "GNOME toolkit (weaker copyleft than Qt GPL)" },
+      { "name": "electron", "version": "28.x", "license": "MIT", "reason": "Chromium-based desktop app framework" }
+    ],
+    "gstreamer": [
+      { "name": "vlcj", "version": "4.x", "license": "GPL-2.0", "reason": "Java bindings for VLC (same copyleft but well-established)" }
+    ],
+    "joda-time": [
+      { "name": "java.time", "version": "built-in", "license": "GPL-2.0 WITH Classpath-exception-2.0", "reason": "Java 8+ built-in time API inspired by Joda-Time" }
+    ]
+  }
+}
